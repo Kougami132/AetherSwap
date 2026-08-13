@@ -206,6 +206,9 @@ def _validate_ranges(cfg: dict) -> dict:
         )
         balance_fallback = "wechat"
     buff["balance_fallback_pay_method"] = balance_fallback
+    buff["balance_require_manual_offer_confirm"] = bool(
+        buff.get("balance_require_manual_offer_confirm", True)
+    )
 
     if isinstance(buff.get("price_tolerance"), (int, float)):
         v = buff["price_tolerance"]

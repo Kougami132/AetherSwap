@@ -839,12 +839,19 @@
                   <option value="alipay">使用支付宝支付</option>
                 </select>
               </div>
+              <div class="field checkbox-field hidden" id="cfg-balance-manual-offer-confirm-field">
+                <label>
+                  <input type="checkbox" id="cfg-balance-require-manual-offer-confirm" />
+                  余额支付后等待手动发起报价确认
+                </label>
+                <small>开启后，余额扣款完成不会立即记录成交；请先在 BUFF App 购买记录手动发送报价，再回到本系统确认继续。</small>
+              </div>
               <div class="field checkbox-field">
                 <label>
                   <input type="checkbox" id="cfg-auto-ask-seller-to-send" />
-                  付款后自动提醒卖家发起 Steam 报价
+                  付款后自动提醒卖家发货
                 </label>
-                <small>开启后，系统会在订单付款确认并写入本地记录后自动调用 BUFF 催发货接口；若 BUFF 风控或接口状态未知，会停止后续写请求并保留对账门禁。</small>
+                <small>开启后，系统会在订单付款确认并写入本地记录后自动调用 BUFF 催发货接口；这不是买家手动 Plus 发起报价。若 BUFF 风控或接口状态未知，会停止后续写请求并保留对账门禁。</small>
               </div>
             </div>
           </div>

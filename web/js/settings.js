@@ -29,8 +29,10 @@ function browserTimezoneLabel(timezone = detectBrowserTimezone()) {
 function updateBalanceFallbackVisibility() {
   const pay = el("cfg-pay_method");
   const fallbackField = el("cfg-balance-fallback-pay-method-field");
-  if (!pay || !fallbackField) return;
-  fallbackField.classList.toggle("hidden", pay.value !== "balance");
+  const manualOfferField = el("cfg-balance-manual-offer-confirm-field");
+  if (!pay) return;
+  if (fallbackField) fallbackField.classList.toggle("hidden", pay.value !== "balance");
+  if (manualOfferField) manualOfferField.classList.toggle("hidden", pay.value !== "balance");
 }
 async function loadConfig() {
   const d = await fetchJson(API + "/config");
@@ -57,6 +59,8 @@ async function loadConfig() {
   if (gPay) gPay.value = (b.pay_method || "alipay").toLowerCase();
   const gFallback = el("cfg-balance-fallback-pay-method");
   if (gFallback) gFallback.value = (b.balance_fallback_pay_method || "wechat").toLowerCase();
+  const gManualOfferConfirm = el("cfg-balance-require-manual-offer-confirm");
+  if (gManualOfferConfirm) gManualOfferConfirm.checked = b.balance_require_manual_offer_confirm !== false;
   const gAutoAskSeller = el("cfg-auto-ask-seller-to-send");
   if (gAutoAskSeller) gAutoAskSeller.checked = b.auto_ask_seller_to_send !== false;
   updateBalanceFallbackVisibility();
@@ -230,6 +234,7 @@ function formToConfig() {
     buff: {
       pay_method: el("cfg-pay_method") ? el("cfg-pay_method").value : undefined,
       balance_fallback_pay_method: el("cfg-balance-fallback-pay-method") ? el("cfg-balance-fallback-pay-method").value : undefined,
+      balance_require_manual_offer_confirm: !!el("cfg-balance-require-manual-offer-confirm")?.checked,
       auto_ask_seller_to_send: !!el("cfg-auto-ask-seller-to-send")?.checked,
       game: el("cfg-buff-game") ? el("cfg-buff-game").value.trim() : undefined,
       price_tolerance: el("cfg-price_tolerance") ? parseFloat(el("cfg-price_tolerance").value) || undefined : undefined,

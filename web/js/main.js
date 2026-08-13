@@ -149,19 +149,27 @@ async function refreshStatus() {
     const p = d.pending;
     const box = el("pending-payment");
     if (!box) return;
-    if (p && p.pay_url) {
+    if (p && (p.pay_url || p.show_pay_link === false)) {
       box.classList.remove("hidden");
+      const title = box.querySelector(".payment-text h3");
+      if (title) title.textContent = p.title || "等待支付";
       const link = el("pay-link");
+      const copyBtn = el("btn-copy-pay");
+      const showPayLink = p.show_pay_link !== false && !!p.pay_url;
       if (link) {
-        link.href = p.pay_url;
+        link.classList.toggle("hidden", !showPayLink);
+        link.href = showPayLink ? p.pay_url : "#";
         link.textContent = p.pay_type === "wechat" ? "微信支付链接（可复制到浏览器）" : "打开支付链接";
       }
+      if (copyBtn) copyBtn.classList.toggle("hidden", !showPayLink);
+      const paidBtn = el("btn-paid");
+      if (paidBtn) paidBtn.textContent = p.confirm_text || "已完成支付";
       const t = el("pay-type");
-      if (t) t.textContent = p.name ? "订单: " + p.name : "";
-      box.dataset.payUrl = p.pay_url;
+      if (t) t.textContent = p.message || (p.name ? "订单: " + p.name : "");
+      box.dataset.payUrl = showPayLink ? p.pay_url : "";
       const qrWrap = el("pay-qrcode-wrap");
       const qrBox = el("pay-qrcode");
-      if (p.pay_type === "wechat" && qrWrap && qrBox && typeof QRCode !== "undefined") {
+      if (showPayLink && p.pay_type === "wechat" && qrWrap && qrBox && typeof QRCode !== "undefined") {
         qrWrap.classList.remove("hidden");
         qrBox.innerHTML = "";
         try {
@@ -176,6 +184,14 @@ async function refreshStatus() {
     } else {
       box.classList.add("hidden");
       box.dataset.payUrl = "";
+      const title = box.querySelector(".payment-text h3");
+      if (title) title.textContent = "等待支付";
+      const paidBtn = el("btn-paid");
+      if (paidBtn) paidBtn.textContent = "已完成支付";
+      const link = el("pay-link");
+      const copyBtn = el("btn-copy-pay");
+      if (link) link.classList.remove("hidden");
+      if (copyBtn) copyBtn.classList.remove("hidden");
       const qrWrap = el("pay-qrcode-wrap");
       const qrBox = el("pay-qrcode");
       if (qrWrap) qrWrap.classList.add("hidden");

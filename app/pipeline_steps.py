@@ -1031,6 +1031,10 @@ def _do_payment_notify_and_wait(
     is_stop_requested: callable,
     log_fn: Optional[Callable[[str, str], None]],
     on_entering_payment: Optional[Callable[[], None]] = None,
+    title: Optional[str] = None,
+    message: Optional[str] = None,
+    confirm_text: Optional[str] = None,
+    show_pay_link: bool = True,
 ) -> bool:
     """Handle notification and wait for user payment confirmation.
     Returns True if user confirmed, False on cancel/timeout/stop.
@@ -1041,6 +1045,10 @@ def _do_payment_notify_and_wait(
         "pay_type": pay_type,
         "name": name,
         "order_id": order_id,
+        "title": title,
+        "message": message,
+        "confirm_text": confirm_text,
+        "show_pay_link": show_pay_link,
     })
     try:
         if on_entering_payment:
@@ -1092,6 +1100,36 @@ def _do_payment_notify_and_wait(
         return ok
     finally:
         set_pending_payment(None)
+
+def _wait_balance_manual_offer_confirm(
+    item: Dict[str, Any],
+    config: dict,
+    unit_price: float,
+    num: int,
+    order_id: str,
+    acc: float,
+    set_pending_payment: callable,
+    wait_payment_confirm: callable,
+    confirm_payment: callable,
+    is_stop_requested: callable,
+    log_fn: Optional[Callable[[str, str], None]],
+    on_entering_payment: Optional[Callable[[], None]] = None,
+) -> bool:
+    buff_cfg = config.get("buff") or {}
+    if buff_cfg.get("balance_require_manual_offer_confirm", True) is False:
+        return True
+    if log_fn:
+        log_fn("[Buff]   → 余额扣款已完成，等待用户在 BUFF App 手动发送报价后确认…", "info")
+    return _do_payment_notify_and_wait(
+        item, config, unit_price, num, "", "balance_manual_offer", order_id, acc,
+        set_pending_payment, wait_payment_confirm, confirm_payment,
+        is_stop_requested, log_fn, on_entering_payment,
+        title="等待手动发送报价",
+        message="余额已完成扣款。请前往 BUFF App 的购买记录中手动发送报价，发送完成后回到这里点击确认继续。",
+        confirm_text="已在 App 发送报价",
+        show_pay_link=False,
+    )
+
 def _do_batch_wait_finalize_and_append(
     buff_client: Any,
     item: Dict[str, Any],
@@ -2066,10 +2104,27 @@ def lock_and_confirm_payment(
         if payment_state == "paid":
             if log_fn:
                 pay_label = "余额支付" if pay_type == "balance" else "支付"
-                log_fn(
-                    f"[Buff]   → {pay_label}已完成 order_id={order_id}，记录成交",
-                    "info",
+                log_fn(f"[Buff]   → {pay_label}已完成 order_id={order_id}", "info")
+            if pay_type == "balance":
+                ok = _wait_balance_manual_offer_confirm(
+                    item, config, p, 1, order_id, acc,
+                    set_pending_payment, wait_payment_confirm, confirm_payment,
+                    is_stop_requested, log_fn, on_entering_payment,
                 )
+                if is_stop_requested() or not ok:
+                    update_checkout(
+                        expected_intent_id=checkout_intent_id,
+                        stage="order_paid_waiting_manual_offer",
+                        order_id=order_id,
+                        reason="余额已扣款，等待用户在 BUFF App 手动发送报价确认",
+                    )
+                    return _PurchaseAttempt(
+                        _PurchaseAttemptStatus.CREATED_NOT_PAID,
+                        reason="余额已扣款，用户尚未确认已在 BUFF App 手动发送报价",
+                        order_id=order_id,
+                    )
+            if log_fn:
+                log_fn(f"[Buff]   → order_id={order_id} 继续记录成交", "info")
             identity = _checkout_credential_identity(buff_client)
             update_checkout(
                 expected_intent_id=checkout_intent_id,
