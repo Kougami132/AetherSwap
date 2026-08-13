@@ -25,6 +25,13 @@ function browserTimezoneLabel(timezone = detectBrowserTimezone()) {
     : "UTC offset unavailable";
   return timezone.name ? `${timezone.name} (${offsetLabel})` : offsetLabel;
 }
+
+function updateBalanceFallbackVisibility() {
+  const pay = el("cfg-pay_method");
+  const fallbackField = el("cfg-balance-fallback-pay-method-field");
+  if (!pay || !fallbackField) return;
+  fallbackField.classList.toggle("hidden", pay.value !== "balance");
+}
 async function loadConfig() {
   const d = await fetchJson(API + "/config");
   const c = d.config || {};
@@ -50,6 +57,7 @@ async function loadConfig() {
   if (gPay) gPay.value = (b.pay_method || "alipay").toLowerCase();
   const gFallback = el("cfg-balance-fallback-pay-method");
   if (gFallback) gFallback.value = (b.balance_fallback_pay_method || "wechat").toLowerCase();
+  updateBalanceFallbackVisibility();
   const gTarget = el("cfg-target_balance");
   if (gTarget) gTarget.value = p.target_balance ?? "";
   const gMaxDisc = el("cfg-max_discount");
@@ -874,6 +882,13 @@ function renderGettingStartedCard(cfg, accounts) {
 }
 
 function bindUXEvents() {
+  const payMethod = el("cfg-pay_method");
+  if (payMethod && !payMethod._balanceFallbackBound) {
+    payMethod._balanceFallbackBound = true;
+    payMethod.addEventListener("change", updateBalanceFallbackVisibility);
+  }
+  updateBalanceFallbackVisibility();
+
   // 账号面板操作提示关闭按钮
   const aguClose = el("btn-agu-close");
   if (aguClose) {
