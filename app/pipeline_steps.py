@@ -1296,7 +1296,7 @@ def _do_batch_wait_finalize_and_append(
         if m.get("bill_order_id")
     ]
     auto_ask_seller = bool(
-        (config.get("buff") or {}).get("auto_ask_seller_to_send", False)
+        (config.get("buff") or {}).get("auto_ask_seller_to_send", True)
     )
     if auto_ask_seller and bill_order_ids:
         try:
@@ -1381,7 +1381,7 @@ def _record_single_purchase_after_payment(
         reason="订单已写入本地交易记录",
     )
     auto_ask_seller = bool(
-        (config.get("buff") or {}).get("auto_ask_seller_to_send", False)
+        (config.get("buff") or {}).get("auto_ask_seller_to_send", True)
     )
     if auto_ask_seller:
         try:
@@ -1477,7 +1477,7 @@ def _do_wait_payment_and_append(
         reason="订单已写入本地交易记录",
     )
     auto_ask_seller = bool(
-        (config.get("buff") or {}).get("auto_ask_seller_to_send", False)
+        (config.get("buff") or {}).get("auto_ask_seller_to_send", True)
     )
     if auto_ask_seller:
         try:

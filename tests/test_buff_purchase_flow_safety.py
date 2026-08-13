@@ -1352,9 +1352,14 @@ def test_balance_paid_order_is_recorded_without_manual_confirmation(monkeypatch)
                 "payment_state": "paid",
             }
 
-        def ask_seller_to_send(self, *_args):
-            raise AssertionError("automatic prompt should be disabled")
+        def __init__(self):
+            self.shipping_calls = 0
 
+        def ask_seller_to_send(self, *_args):
+            self.shipping_calls += 1
+            return True
+
+    client = BuffClient()
     kwargs, pending, purchases = _checkout_args(wait_result=False)
     monkeypatch.setattr(
         steps,
@@ -1363,7 +1368,7 @@ def test_balance_paid_order_is_recorded_without_manual_confirmation(monkeypatch)
     )
 
     paid = steps.lock_and_confirm_payment(
-        BuffClient(),
+        client,
         _item([{"id": "sell-1", "price": "10.0"}]),
         _config("balance"),
         **kwargs,
@@ -1373,6 +1378,7 @@ def test_balance_paid_order_is_recorded_without_manual_confirmation(monkeypatch)
     assert pending == []
     assert len(purchases) == 1
     assert purchases[0]["buff_order_id"] == "bill-balance"
+    assert client.shipping_calls == 1
 
 
 def test_balance_order_without_paid_state_is_not_recorded(monkeypatch):
@@ -1443,6 +1449,9 @@ def test_balance_insufficient_preview_uses_configured_fallback(monkeypatch):
                 "pay_type": pay_method,
             }
 
+        def ask_seller_to_send(self, *_args):
+            return True
+
     client = BuffClient()
     kwargs, _pending, purchases = _checkout_args(wait_result=True)
     monkeypatch.setattr(
@@ -1463,7 +1472,46 @@ def test_balance_insufficient_preview_uses_configured_fallback(monkeypatch):
     assert len(purchases) == 1
 
 
-def test_automatic_shipping_prompt_is_disabled_by_default(monkeypatch):
+def test_automatic_shipping_prompt_is_enabled_by_default(monkeypatch):
+    class BuffClient:
+        _pay_method = "alipay"
+
+        def __init__(self):
+            self.shipping_calls = 0
+
+        def lock_and_get_pay_url(self, *_args):
+            return {
+                "success": True,
+                "order_id": "bill-no-auto-prompt",
+                "pay_url": "https://pay.invalid/no-auto-prompt",
+                "pay_type": "alipay",
+            }
+
+        def ask_seller_to_send(self, *_args):
+            self.shipping_calls += 1
+            return True
+
+    client = BuffClient()
+    kwargs, _pending, purchases = _checkout_args(wait_result=True)
+    monkeypatch.setattr(
+        steps,
+        "_fetch_smart_market_price",
+        lambda *_args, **_kwargs: None,
+    )
+
+    paid = steps.lock_and_confirm_payment(
+        client,
+        _item([{"id": "sell-1", "price": "10.0"}]),
+        _config(),
+        **kwargs,
+    )
+
+    assert paid == 10.0
+    assert client.shipping_calls == 1
+    assert len(purchases) == 1
+
+
+def test_shipping_prompt_can_be_disabled(monkeypatch):
     class BuffClient:
         _pay_method = "alipay"
 
@@ -1483,6 +1531,8 @@ def test_automatic_shipping_prompt_is_disabled_by_default(monkeypatch):
             raise AssertionError("automatic prompt should be disabled")
 
     client = BuffClient()
+    config = _config()
+    config["buff"]["auto_ask_seller_to_send"] = False
     kwargs, _pending, purchases = _checkout_args(wait_result=True)
     monkeypatch.setattr(
         steps,
@@ -1493,7 +1543,7 @@ def test_automatic_shipping_prompt_is_disabled_by_default(monkeypatch):
     paid = steps.lock_and_confirm_payment(
         client,
         _item([{"id": "sell-1", "price": "10.0"}]),
-        _config(),
+        config,
         **kwargs,
     )
 
@@ -1522,7 +1572,6 @@ def test_opted_in_shipping_prompt_unknown_halts_after_recording(monkeypatch):
             )
 
     config = _config()
-    config["buff"]["auto_ask_seller_to_send"] = True
     kwargs, _pending, purchases = _checkout_args(wait_result=True)
     monkeypatch.setattr(
         steps,
@@ -1571,7 +1620,6 @@ def test_batch_shipping_prompt_unknown_preserves_all_committed_items(monkeypatch
             )
 
     config = _config("wechat")
-    config["buff"]["auto_ask_seller_to_send"] = True
     kwargs, _pending, purchases = _checkout_args(wait_result=True)
     monkeypatch.setattr(
         steps,

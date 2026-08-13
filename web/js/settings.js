@@ -57,6 +57,8 @@ async function loadConfig() {
   if (gPay) gPay.value = (b.pay_method || "alipay").toLowerCase();
   const gFallback = el("cfg-balance-fallback-pay-method");
   if (gFallback) gFallback.value = (b.balance_fallback_pay_method || "wechat").toLowerCase();
+  const gAutoAskSeller = el("cfg-auto-ask-seller-to-send");
+  if (gAutoAskSeller) gAutoAskSeller.checked = b.auto_ask_seller_to_send !== false;
   updateBalanceFallbackVisibility();
   const gTarget = el("cfg-target_balance");
   if (gTarget) gTarget.value = p.target_balance ?? "";
@@ -228,6 +230,7 @@ function formToConfig() {
     buff: {
       pay_method: el("cfg-pay_method") ? el("cfg-pay_method").value : undefined,
       balance_fallback_pay_method: el("cfg-balance-fallback-pay-method") ? el("cfg-balance-fallback-pay-method").value : undefined,
+      auto_ask_seller_to_send: !!el("cfg-auto-ask-seller-to-send")?.checked,
       game: el("cfg-buff-game") ? el("cfg-buff-game").value.trim() : undefined,
       price_tolerance: el("cfg-price_tolerance") ? parseFloat(el("cfg-price_tolerance").value) || undefined : undefined,
     },

@@ -19,10 +19,9 @@ DEFAULTS = {
         "balance_fallback_pay_method": "wechat",
         "game": "csgo",
         "price_tolerance": 0.5,
-        # Optional ancillary POSTs add traffic and can themselves have an
-        # unknown result. Keep seller reminders manual unless explicitly opted
-        # in by an advanced user.
-        "auto_ask_seller_to_send": False,
+        # After payment is confirmed, automatically ask BUFF sellers to
+        # send the Steam trade offer so balance checkout can run hands-free.
+        "auto_ask_seller_to_send": True,
     },
     "stability": {
         "days": 30,
