@@ -1894,13 +1894,20 @@ def lock_and_confirm_payment(
                         if not isinstance(preparation, dict) or not preparation.get(
                             "success"
                         ):
+                            reason = str(
+                                preparation_info.get("msg")
+                                or preparation_info.get("code")
+                                or "BUFF 购买预检未通过"
+                            )
+                            if log_fn:
+                                code_str = preparation_info.get("code") or "未知"
+                                log_fn(
+                                    f"[Buff]   → 购买预检失败 code={code_str} msg={reason}",
+                                    "warn",
+                                )
                             return _PurchaseAttempt(
                                 _PurchaseAttemptStatus.FAILED,
-                                reason=str(
-                                    preparation_info.get("msg")
-                                    or preparation_info.get("code")
-                                    or "BUFF 购买预检未通过"
-                                ),
+                                reason=reason,
                             )
                     prepared_preview = preparation.get("preview")
                     prepared_pay_method = str(
@@ -2035,7 +2042,12 @@ def lock_and_confirm_payment(
             if log_fn:
                 code_str = result.get('code') if result else '未知'
                 msg_str = result.get('msg', '无响应内容') if result else '请求失败或超时'
-                log_fn(f"[Buff]   → 锁单失败 code={code_str} msg={msg_str}", "warn")
+                detail = (
+                    f" status={attempt.status.name} reason={attempt.reason}"
+                    if attempt.reason
+                    else f" status={attempt.status.name}"
+                )
+                log_fn(f"[Buff]   → 锁单失败 code={code_str} msg={msg_str}{detail}", "warn")
             return attempt
         order_id = str(result.get("order_id") or "")
         pay_url = str(result.get("pay_url") or "")
@@ -2299,7 +2311,17 @@ def lock_and_confirm_payment(
                     expected_intent_id=checkout_intent_id,
                 )
             if log_fn:
-                log_fn("[Buff]   → 批量锁单失败，接口未返回成功状态", "warn")
+                code_str = batch_result.get('code') if batch_result else '未知'
+                msg_str = batch_result.get('msg', '无响应内容') if batch_result else '请求失败或超时'
+                detail = (
+                    f" status={attempt.status.name} reason={attempt.reason}"
+                    if attempt.reason
+                    else f" status={attempt.status.name}"
+                )
+                log_fn(
+                    f"[Buff]   → 批量锁单失败 code={code_str} msg={msg_str}{detail}",
+                    "warn",
+                )
             return attempt
         batch_id = str(batch_result.get("batch_id") or "")
         pay_url = str(batch_result.get("pay_url") or "")

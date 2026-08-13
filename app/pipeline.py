@@ -417,7 +417,23 @@ def _run_pipeline(config: dict) -> None:
                     return
                 continue
 
-            ctx.log("支付方式与 Buff 客户端已就绪", "info", category="buff")
+            buff_cfg = cfg.get("buff") or {}
+            pay_method_label = str(buff_cfg.get("pay_method") or "alipay").strip().lower()
+            if pay_method_label == "balance":
+                fallback_label = str(
+                    buff_cfg.get("balance_fallback_pay_method") or "wechat"
+                ).strip().lower()
+                ctx.log(
+                    f"支付方式与 Buff 客户端已就绪: BUFF余额，不足时使用{fallback_label}",
+                    "info",
+                    category="buff",
+                )
+            else:
+                ctx.log(
+                    f"支付方式与 Buff 客户端已就绪: {pay_method_label}",
+                    "info",
+                    category="buff",
+                )
             now_ts = time.time()
             expired_ids = [gid for gid, exp in failed_goods_ids_ttl.items() if now_ts >= exp]
             for gid in expired_ids:
