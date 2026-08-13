@@ -47,7 +47,9 @@ async function loadConfig() {
   const gMinVolume = el("cfg-min_volume");
   if (gMinVolume) gMinVolume.value = i.min_volume ?? "";
   const gPay = el("cfg-pay_method");
-  if (gPay) gPay.value = (b.pay_method || "wechat").toLowerCase();
+  if (gPay) gPay.value = (b.pay_method || "alipay").toLowerCase();
+  const gFallback = el("cfg-balance-fallback-pay-method");
+  if (gFallback) gFallback.value = (b.balance_fallback_pay_method || "wechat").toLowerCase();
   const gTarget = el("cfg-target_balance");
   if (gTarget) gTarget.value = p.target_balance ?? "";
   const gMaxDisc = el("cfg-max_discount");
@@ -217,6 +219,7 @@ function formToConfig() {
     },
     buff: {
       pay_method: el("cfg-pay_method") ? el("cfg-pay_method").value : undefined,
+      balance_fallback_pay_method: el("cfg-balance-fallback-pay-method") ? el("cfg-balance-fallback-pay-method").value : undefined,
       game: el("cfg-buff-game") ? el("cfg-buff-game").value.trim() : undefined,
       price_tolerance: el("cfg-price_tolerance") ? parseFloat(el("cfg-price_tolerance").value) || undefined : undefined,
     },

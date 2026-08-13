@@ -175,6 +175,43 @@ def _html_looks_like_login(text: str) -> bool:
     return any(marker in lowered for marker in ("/login", "登录", "未登录", "sign in"))
 PAY_METHOD_ALIPAY = 51
 PAY_METHOD_WECHAT = 6
+PAY_METHOD_BALANCE = 79
+
+PAY_METHOD_NAMES = {
+    "alipay": PAY_METHOD_ALIPAY,
+    "wechat": PAY_METHOD_WECHAT,
+    "balance": PAY_METHOD_BALANCE,
+}
+
+
+def _pay_method_name(value) -> str:
+    try:
+        method_id = int(value)
+    except (TypeError, ValueError):
+        return str(value or "").strip().lower()
+    return {
+        PAY_METHOD_ALIPAY: "alipay",
+        PAY_METHOD_WECHAT: "wechat",
+        PAY_METHOD_BALANCE: "balance",
+    }.get(method_id, str(method_id))
+
+
+def _is_balance_insufficient_text(value) -> bool:
+    text = str(value or "").strip().casefold()
+    if not text:
+        return False
+    return any(
+        marker in text
+        for marker in (
+            "余额不足",
+            "余额不够",
+            "钱包余额不足",
+            "balance insufficient",
+            "insufficient balance",
+            "not enough balance",
+            "insufficient funds",
+        )
+    )
 API_HISTORY = "https://buff.163.com/api/market/buy_order/history"
 API_USER_INFO = "https://buff.163.com/account/api/user/info/v2"
 API_SELL_ORDER = "https://buff.163.com/api/market/goods/sell_order"
@@ -740,21 +777,31 @@ class BuffBuyer:
             headers=headers,
         )
 
-    def _preview_payment_error(self, preview_data: dict) -> str:
+    def _payment_method_item(self, preview_data: dict, pay_method: Optional[int] = None):
         pay_methods = preview_data.get("pay_methods")
         if not isinstance(pay_methods, list):
-            return "BUFF 购买预检未返回支付方式"
-        selected = next(
+            return None
+        method = self.pay_method if pay_method is None else pay_method
+        return next(
             (
                 item
                 for item in pay_methods
                 if isinstance(item, dict)
-                and str(item.get("value")) == str(self.pay_method)
+                and str(item.get("value")) == str(method)
             ),
             None,
         )
+
+    def _preview_payment_error(
+        self, preview_data: dict, pay_method: Optional[int] = None
+    ) -> str:
+        pay_methods = preview_data.get("pay_methods")
+        method = self.pay_method if pay_method is None else pay_method
+        if not isinstance(pay_methods, list):
+            return "BUFF 购买预检未返回支付方式"
+        selected = self._payment_method_item(preview_data, method)
         if selected is None:
-            return f"BUFF 购买预检不支持当前支付方式 {self.pay_method}"
+            return f"BUFF 购买预检不支持当前支付方式 {method}"
         if selected.get("btn_clickable") is not True:
             return str(
                 selected.get("error")
@@ -762,6 +809,14 @@ class BuffBuyer:
                 or "BUFF 购买预检显示当前支付方式不可用"
             )
         return ""
+
+    def _preview_balance_is_insufficient(self, preview_data: dict) -> bool:
+        selected = self._payment_method_item(preview_data, PAY_METHOD_BALANCE)
+        if not isinstance(selected, dict) or selected.get("btn_clickable") is True:
+            return False
+        return _is_balance_insufficient_text(
+            selected.get("error") or selected.get("btn_text") or selected.get("message")
+        )
 
     def get_and_buy(
         self,
@@ -941,6 +996,7 @@ class BuffBuyer:
         *,
         on_created: Optional[Callable[[str], None]] = None,
         preview: Optional[dict] = None,
+        pay_method: Optional[int] = None,
     ) -> dict:
         if preview is None:
             preview = self.preview_buy(game, goods_id, sell_order_id, price)
@@ -968,7 +1024,8 @@ class BuffBuyer:
                 "msg": "BUFF 购买预检返回格式异常",
                 "created": False,
             }
-        preview_error = self._preview_payment_error(preview_data)
+        effective_pay_method = self.pay_method if pay_method is None else int(pay_method)
+        preview_error = self._preview_payment_error(preview_data, effective_pay_method)
         if preview_error:
             return {
                 "success": False,
@@ -981,7 +1038,7 @@ class BuffBuyer:
             "goods_id": str(goods_id),
             "sell_order_id": sell_order_id,
             "price": price,
-            "pay_method": self.pay_method,
+            "pay_method": effective_pay_method,
             "allow_tradable_cooldown": 0,
             "token": "",
             "cdkey_id": "",
@@ -1002,7 +1059,18 @@ class BuffBuyer:
                 msg_str = str(err_msg)
                 if "Cooling Down" in msg_str:
                     return {"success": False, "code": "COOLING_DOWN"}
-                return {"success": False, "code": "FAIL", "msg": err_msg}
+                if (
+                    effective_pay_method == PAY_METHOD_BALANCE
+                    and _is_balance_insufficient_text(msg_str)
+                ):
+                    return {
+                        "success": False,
+                        "code": "BALANCE_INSUFFICIENT",
+                        "msg": err_msg,
+                        "created": False,
+                        "safe_to_fallback": True,
+                    }
+                return {"success": False, "code": "FAIL", "msg": err_msg, "created": False}
             data = res.get("data")
             if not isinstance(data, dict):
                 raise BuffWriteResultUnknown(
@@ -1028,9 +1096,17 @@ class BuffBuyer:
                     )
                     error.order_id = new_order_id
                     raise error from exc
-            pay_type = "wechat" if self.pay_method == PAY_METHOD_WECHAT else "alipay"
+            pay_type = _pay_method_name(effective_pay_method)
+            if effective_pay_method == PAY_METHOD_BALANCE:
+                return {
+                    "success": True,
+                    "pay_url": None,
+                    "pay_type": "balance",
+                    "payment_state": "paid",
+                    "order_id": new_order_id,
+                }
             try:
-                if self.pay_method == PAY_METHOD_WECHAT:
+                if effective_pay_method == PAY_METHOD_WECHAT:
                     jittered_sleep(0.5)
                     pay_url = self._get_wechat_pay_url(game, new_order_id)
                 else:

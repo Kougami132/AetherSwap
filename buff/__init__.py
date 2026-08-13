@@ -1,6 +1,8 @@
 from .buyer import (
     DEFAULT_USER_AGENT,
     PAY_METHOD_ALIPAY,
+    PAY_METHOD_BALANCE,
+    PAY_METHOD_NAMES,
     PAY_METHOD_WECHAT,
     BuffBuyer,
 )
@@ -29,6 +31,8 @@ __all__ = [
     "BuffWriteResultUnknown",
     "DEFAULT_USER_AGENT",
     "PAY_METHOD_ALIPAY",
+    "PAY_METHOD_BALANCE",
+    "PAY_METHOD_NAMES",
     "PAY_METHOD_WECHAT",
     "BuffBuyer",
     "clear_global_policy",

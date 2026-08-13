@@ -15,6 +15,7 @@ from buff.buyer import (
     API_USER_INFO,
     API_WX_PAY_QRCODE,
     DEFAULT_USER_AGENT,
+    PAY_METHOD_BALANCE,
     PAY_METHOD_WECHAT,
     BuffBuyer,
 )
@@ -1155,6 +1156,38 @@ def test_created_order_with_valid_payment_url_keeps_success_contract():
         ("POST", API_BUY),
         ("GET", API_PAGE_PAY),
     ]
+
+
+def test_balance_lock_payload_uses_pay_method_79_and_skips_url_lookup():
+    session = FakeSession(
+        *checkout_responses(
+            FakeResponse({"code": "OK", "data": {"id": "balance-order"}}),
+            pay_method=PAY_METHOD_BALANCE,
+        )
+    )
+    buyer = BuffBuyer(
+        "session=s; csrf_token=c",
+        pay_method=PAY_METHOD_BALANCE,
+        session=session,
+        request_policy=no_wait_policy(),
+    )
+
+    result = buyer.lock_and_get_pay_url("csgo", 1, "sell-order", "10.00")
+
+    assert result == {
+        "success": True,
+        "pay_url": None,
+        "pay_type": "balance",
+        "payment_state": "paid",
+        "order_id": "balance-order",
+    }
+    assert [(method, url) for method, url, _ in session.calls] == [
+        ("GET", API_USER_INFO),
+        ("GET", API_BUY_PREVIEW),
+        ("POST", API_BUY),
+    ]
+    payload = json.loads(session.calls[2][2]["data"])
+    assert payload["pay_method"] == PAY_METHOD_BALANCE
 
 
 def test_login_redirect_is_auth_expired_and_verification_redirect_is_fused():

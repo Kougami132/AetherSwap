@@ -1341,6 +1341,88 @@ def _do_batch_wait_finalize_and_append(
         expected_intent_id=checkout_intent_id,
     )
     return total
+
+def _record_single_purchase_after_payment(
+    buff_client: Any,
+    item: Dict[str, Any],
+    config: dict,
+    unit_price: float,
+    num: int,
+    goods_id: int,
+    order_id: str,
+    checkout_intent_id: str,
+    append_purchase: callable,
+    log_fn: Optional[Callable[[str, str], None]],
+    game_buff: str,
+    sell_order_id: str = "",
+    market_price: Optional[float] = None,
+) -> float:
+    if market_price is None:
+        mhn = (item.get("steam_market_name") or item.get("name") or "").strip()
+        market_price = _fetch_smart_market_price(mhn, config, app_id=730)
+    saved_name = (item.get("steam_market_name") or item.get("name") or "").strip()
+    base_rec = {
+        "name": saved_name,
+        "goods_id": goods_id,
+        "price": unit_price,
+        "at": time.time(),
+        "pending_receipt": True,
+        "buff_order_id": str(order_id),
+        "buff_sell_order_id": str(sell_order_id),
+    }
+    if market_price is not None and market_price > 0:
+        base_rec["market_price"] = round(float(market_price), 2)
+    for _ in range(num):
+        append_purchase(dict(base_rec))
+    update_checkout(
+        expected_intent_id=checkout_intent_id,
+        stage="purchase_recorded",
+        order_id=str(order_id),
+        reason="订单已写入本地交易记录",
+    )
+    auto_ask_seller = bool(
+        (config.get("buff") or {}).get("auto_ask_seller_to_send", False)
+    )
+    if auto_ask_seller:
+        try:
+            if buff_client.ask_seller_to_send(order_id, game_buff) and log_fn:
+                log_fn("[Buff]   → 已提醒卖家发货，请留意 Steam 报价", "info")
+            elif log_fn:
+                log_fn("[Buff]   → 提醒卖家发货未成功（可稍后在订单页手动催发货）", "warn")
+        except (BuffAuthExpired, BuffRequestBlocked) as exc:
+            resolve_checkout(
+                "single_purchase_recorded_shipping_prompt_blocked",
+                expected_intent_id=checkout_intent_id,
+            )
+            _mark_committed(exc, unit_price * num)
+            raise
+        except Exception as exc:
+            update_checkout(
+                expected_intent_id=checkout_intent_id,
+                stage="shipping_reminder_unknown",
+                order_id=str(order_id),
+                reason=f"{type(exc).__name__}: {exc}",
+                last_error_type=type(exc).__name__,
+            )
+            if log_fn:
+                log_fn(
+                    f"[Buff]   → 成交已记录；提醒卖家发货结果未知 ({type(exc).__name__})，已停止后续 BUFF 写请求",
+                    "warn",
+                )
+            halted = PurchaseWriteResultUnknown(
+                "成交已记录，但提醒卖家发货的写请求结果未知",
+                order_id=str(order_id),
+            )
+            _mark_committed(halted, unit_price * num)
+            raise halted from exc
+    elif log_fn:
+        log_fn("[Buff]   → 已跳过自动催发货，以减少风控敏感写请求", "info")
+    resolve_checkout(
+        "single_purchase_recorded",
+        expected_intent_id=checkout_intent_id,
+    )
+    return unit_price * num
+
 def _do_wait_payment_and_append(
     buff_client: Any,
     item: Dict[str, Any],
@@ -1759,6 +1841,9 @@ def lock_and_confirm_payment(
                     )
                 _verify_checkout_session(buff_client, game_buff)
                 prepared_preview = None
+                prepared_pay_method = str(
+                    getattr(buff_client, "_pay_method", "") or ""
+                ).strip().lower()
                 prepare_single = getattr(buff_client, "prepare_single_buy", None)
                 if callable(prepare_single):
                     preparation = prepare_single(
@@ -1773,15 +1858,56 @@ def lock_and_confirm_payment(
                         preparation_info = (
                             preparation if isinstance(preparation, dict) else {}
                         )
-                        return _PurchaseAttempt(
-                            _PurchaseAttemptStatus.FAILED,
-                            reason=str(
-                                preparation_info.get("msg")
-                                or preparation_info.get("code")
-                                or "BUFF 购买预检未通过"
-                            ),
+                        fallback_prepare = getattr(
+                            buff_client, "balance_fallback_preview", None
                         )
+                        if (
+                            callable(fallback_prepare)
+                            and preparation_info.get("code")
+                            == "BALANCE_INSUFFICIENT"
+                            and preparation_info.get("created") is False
+                        ):
+                            fallback_preparation = fallback_prepare(
+                                preparation_info,
+                                game_buff,
+                                goods_id,
+                                str(o.get("id") or ""),
+                                str(o.get("price") or ""),
+                            )
+                            if (
+                                isinstance(fallback_preparation, dict)
+                                and fallback_preparation.get("success")
+                            ):
+                                if log_fn:
+                                    log_fn(
+                                        "[Buff]   → BUFF 余额不足，切换到"
+                                        f"{fallback_preparation.get('pay_method') or '备用'}支付",
+                                        "info",
+                                    )
+                                preparation = fallback_preparation
+                            else:
+                                preparation_info = (
+                                    fallback_preparation
+                                    if isinstance(fallback_preparation, dict)
+                                    else preparation_info
+                                )
+                        if not isinstance(preparation, dict) or not preparation.get(
+                            "success"
+                        ):
+                            return _PurchaseAttempt(
+                                _PurchaseAttemptStatus.FAILED,
+                                reason=str(
+                                    preparation_info.get("msg")
+                                    or preparation_info.get("code")
+                                    or "BUFF 购买预检未通过"
+                                ),
+                            )
                     prepared_preview = preparation.get("preview")
+                    prepared_pay_method = str(
+                        preparation.get("pay_method")
+                        or getattr(buff_client, "_pay_method", "")
+                        or ""
+                    ).strip().lower()
                 identity = _checkout_credential_identity(buff_client)
                 intent = begin_checkout(
                     "single",
@@ -1820,12 +1946,17 @@ def lock_and_confirm_payment(
                     supports_preview = _supports_keyword_argument(
                         lock_order, "preview"
                     )
-                    if supports_created or supports_preview:
+                    supports_pay_method = _supports_keyword_argument(
+                        lock_order, "pay_method"
+                    )
+                    if supports_created or supports_preview or supports_pay_method:
                         optional_kwargs = {}
                         if supports_created:
                             optional_kwargs["on_created"] = _on_order_created
                         if supports_preview:
                             optional_kwargs["preview"] = prepared_preview
+                        if supports_pay_method and prepared_pay_method:
+                            optional_kwargs["pay_method"] = prepared_pay_method
                         result = lock_order(
                             game_buff,
                             goods_id,
@@ -1917,6 +2048,45 @@ def lock_and_confirm_payment(
             return _PurchaseAttempt(
                 _PurchaseAttemptStatus.UNKNOWN_AFTER_SEND,
                 reason="锁单返回成功但缺少订单号",
+            )
+        payment_state = str(result.get("payment_state") or "").strip().lower()
+        pay_type = str(result.get("pay_type") or "").strip().lower()
+        if pay_type == "balance" or payment_state == "paid":
+            if log_fn:
+                log_fn(
+                    f"[Buff]   → 余额支付已完成 order_id={order_id}，记录成交",
+                    "info",
+                )
+            identity = _checkout_credential_identity(buff_client)
+            update_checkout(
+                expected_intent_id=checkout_intent_id,
+                stage="payment_confirmed",
+                order_id=order_id,
+                credential_generation=identity.get("credential_generation", 0),
+                credential_fingerprint=str(
+                    identity.get("credential_fingerprint") or ""
+                ),
+                reason="BUFF 余额支付已完成",
+            )
+            paid = _record_single_purchase_after_payment(
+                buff_client,
+                item,
+                config,
+                p,
+                1,
+                goods_id,
+                order_id,
+                checkout_intent_id,
+                append_purchase,
+                log_fn,
+                game_buff,
+                sell_order_id=str(o.get("id") or ""),
+                market_price=ref_price,
+            )
+            return _PurchaseAttempt(
+                _PurchaseAttemptStatus.SUCCESS,
+                amount=paid,
+                order_id=order_id,
             )
         if not pay_url:
             identity = _checkout_credential_identity(buff_client)

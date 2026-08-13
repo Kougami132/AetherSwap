@@ -16,6 +16,7 @@ DEFAULTS = {
     },
     "buff": {
         "pay_method": "alipay",
+        "balance_fallback_pay_method": "wechat",
         "game": "csgo",
         "price_tolerance": 0.5,
         # Optional ancillary POSTs add traffic and can themselves have an
@@ -190,6 +191,22 @@ def _validate_ranges(cfg: dict) -> dict:
         v = stab["price_percentile_ceil_rising"]
         if not (0 < v <= 1):
             stab["price_percentile_ceil_rising"] = max(0.001, min(v, 1.0))
+
+    pay_method = str(buff.get("pay_method") or "alipay").strip().lower()
+    if pay_method not in {"alipay", "wechat", "balance"}:
+        warnings.warn(f"[config] buff.pay_method={pay_method!r} 未知，已修正为 alipay")
+        pay_method = "alipay"
+    buff["pay_method"] = pay_method
+
+    balance_fallback = str(
+        buff.get("balance_fallback_pay_method") or "wechat"
+    ).strip().lower()
+    if balance_fallback not in {"wechat", "alipay"}:
+        warnings.warn(
+            f"[config] buff.balance_fallback_pay_method={balance_fallback!r} 未知，已修正为 wechat"
+        )
+        balance_fallback = "wechat"
+    buff["balance_fallback_pay_method"] = balance_fallback
 
     if isinstance(buff.get("price_tolerance"), (int, float)):
         v = buff["price_tolerance"]

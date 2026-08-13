@@ -8,6 +8,8 @@ from buff import (
     BuffBuyer,
     BuffWriteResultUnknown,
     PAY_METHOD_ALIPAY,
+    PAY_METHOD_BALANCE,
+    PAY_METHOD_NAMES,
     PAY_METHOD_WECHAT,
 )
 
@@ -72,11 +74,16 @@ class BuffClient:
         credential_generation: int = 0,
         credentials_provider: Optional[Callable[[], dict]] = None,
         credentials_update_callback: Optional[Callable[[str, str], None]] = None,
+        balance_fallback_pay_method: str = "wechat",
     ) -> None:
-        self._pay_method = (pay_method or "alipay").strip().lower()
-        self._pay_method_id = (
-            PAY_METHOD_WECHAT if self._pay_method == "wechat" else PAY_METHOD_ALIPAY
+        self._pay_method = self._normalize_pay_method(pay_method)
+        self._pay_method_id = PAY_METHOD_NAMES[self._pay_method]
+        self._balance_fallback_pay_method = self._normalize_balance_fallback(
+            balance_fallback_pay_method
         )
+        self._balance_fallback_pay_method_id = PAY_METHOD_NAMES[
+            self._balance_fallback_pay_method
+        ]
         self._timeout = timeout_sec
         self._credentials_provider = credentials_provider
         self._credentials_update_callback = credentials_update_callback
@@ -87,6 +94,28 @@ class BuffClient:
         self._client_lock = threading.RLock()
         self._auth_lock = get_buff_auth_lock()
         self._buyer = self._new_buyer(self._cookies, self._user_agent)
+
+    @staticmethod
+    def _normalize_pay_method(value: Any) -> str:
+        method = str(value or "alipay").strip().lower()
+        if method not in PAY_METHOD_NAMES:
+            logger.warning(
+                "未知 BUFF 支付方式 %r，已回退为 alipay",
+                value,
+            )
+            return "alipay"
+        return method
+
+    @staticmethod
+    def _normalize_balance_fallback(value: Any) -> str:
+        method = str(value or "wechat").strip().lower()
+        if method not in {"wechat", "alipay"}:
+            logger.warning(
+                "未知 BUFF 余额不足备用支付方式 %r，已回退为 wechat",
+                value,
+            )
+            return "wechat"
+        return method
 
     @staticmethod
     def _as_generation(value: Any) -> int:
@@ -131,7 +160,8 @@ class BuffClient:
             current_sid = ""
 
         if self._credentials_provider is None:
-            if current_sid and current_sid != (self._buyer.steam_id or ""):
+            buyer_sid = getattr(self._buyer, "steam_id", None)
+            if current_sid and buyer_sid is not None and current_sid != (buyer_sid or ""):
                 old_buyer = self._buyer
                 self._buyer = self._new_buyer(self._cookies, self._user_agent)
                 close = getattr(old_buyer, "close", None)
@@ -143,7 +173,7 @@ class BuffClient:
         generation = self._as_generation(credentials.get("generation"))
         cookies = str(credentials.get("cookies") or "")
         user_agent = str(credentials.get("user_agent") or "").strip() or None
-        buyer_sid = (self._buyer.steam_id or "") if self._buyer is not None else ""
+        buyer_sid = (getattr(self._buyer, "steam_id", "") or "") if self._buyer is not None else ""
         if (
             generation == self._credential_generation
             and cookies == self._cookies
@@ -260,7 +290,10 @@ class BuffClient:
         *,
         on_created: Optional[Callable[[str], None]] = None,
         preview: Optional[dict] = None,
+        pay_method: Optional[str] = None,
     ) -> Dict[str, Any]:
+        selected_method = self._normalize_pay_method(pay_method or self._pay_method)
+        selected_method_id = PAY_METHOD_NAMES[selected_method]
         return self._run(
             lambda buyer: buyer.lock_and_get_pay_url(
                 game,
@@ -269,8 +302,67 @@ class BuffClient:
                 price,
                 on_created=on_created,
                 preview=preview,
+                pay_method=selected_method_id,
             )
         )
+
+    def balance_fallback_pay_method(self) -> str:
+        return self._balance_fallback_pay_method
+
+    def balance_fallback_preview(
+        self,
+        preview_result: Dict[str, Any],
+        game: str,
+        goods_id: int,
+        sell_order_id: str,
+        price: str,
+    ) -> Optional[Dict[str, Any]]:
+        if self._pay_method != "balance":
+            return None
+        if not isinstance(preview_result, dict):
+            return None
+        if preview_result.get("success"):
+            return None
+        if preview_result.get("code") != "BALANCE_INSUFFICIENT":
+            return None
+        fallback_method = self._balance_fallback_pay_method
+        fallback_id = PAY_METHOD_NAMES[fallback_method]
+
+        def operation(buyer: BuffBuyer) -> Dict[str, Any]:
+            preview = buyer.preview_buy(game, goods_id, sell_order_id, price)
+            if preview.get("code") != "OK":
+                return {
+                    "success": False,
+                    "created": False,
+                    "code": str(preview.get("code") or "PREVIEW_REJECTED"),
+                    "msg": preview.get("error")
+                    or preview.get("msg")
+                    or "BUFF 备用支付预检未通过",
+                }
+            data = preview.get("data")
+            if not isinstance(data, dict):
+                return {
+                    "success": False,
+                    "created": False,
+                    "code": "PREVIEW_INVALID",
+                    "msg": "BUFF 备用支付预检返回格式异常",
+                }
+            error = buyer._preview_payment_error(data, fallback_id)
+            if error:
+                return {
+                    "success": False,
+                    "created": False,
+                    "code": "PAY_METHOD_UNAVAILABLE",
+                    "msg": error,
+                }
+            return {
+                "success": True,
+                "created": False,
+                "preview": preview,
+                "pay_method": fallback_method,
+            }
+
+        return self._run(operation)
 
     def prepare_single_buy(
         self,
@@ -302,11 +394,20 @@ class BuffClient:
                 }
             error = buyer._preview_payment_error(data)
             if error:
+                code = "PAY_METHOD_UNAVAILABLE"
+                safe_to_fallback = False
+                if (
+                    self._pay_method == "balance"
+                    and buyer._preview_balance_is_insufficient(data)
+                ):
+                    code = "BALANCE_INSUFFICIENT"
+                    safe_to_fallback = True
                 return {
                     "success": False,
                     "created": False,
-                    "code": "PAY_METHOD_UNAVAILABLE",
+                    "code": code,
                     "msg": error,
+                    "safe_to_fallback": safe_to_fallback,
                 }
             return {"success": True, "created": False, "preview": preview}
 
@@ -445,4 +546,7 @@ def create_buff_client_from_config(credentials: dict, config: dict) -> BuffClien
         credential_generation=credentials.get("generation", 0),
         credentials_provider=get_buff_credentials,
         credentials_update_callback=persist_rotated_cookies,
+        balance_fallback_pay_method=buff_cfg.get(
+            "balance_fallback_pay_method", "wechat"
+        ),
     )
