@@ -1164,22 +1164,11 @@ def test_created_order_with_valid_payment_url_keeps_success_contract():
     ]
 
 
-def test_balance_lock_payload_uses_pay_method_79_and_completes_split_pay():
+def test_balance_lock_payload_uses_pay_method_79_and_completes_page_pay():
     session = FakeSession(
         *checkout_responses(
             FakeResponse({"code": "OK", "data": {"id": "balance-order", "price": "10.00"}}),
-            FakeResponse(
-                {
-                    "code": "OK",
-                    "data": {
-                        "remained_price": "10.00",
-                        "pay_methods": [
-                            {"value": PAY_METHOD_BALANCE_NOT_FROZEN, "selected": True}
-                        ],
-                    },
-                }
-            ),
-            FakeResponse({"code": "OK", "data": {}}),
+            FakeResponse({"code": "OK", "data": {"auto_pay": True}}),
             FakeResponse(
                 {
                     "code": "OK",
@@ -1204,25 +1193,18 @@ def test_balance_lock_payload_uses_pay_method_79_and_completes_split_pay():
         "pay_type": "balance",
         "payment_state": "paid",
         "order_id": "balance-order",
-        "split_pay_method": PAY_METHOD_BALANCE_NOT_FROZEN,
+        "balance_pay_stage": "page_pay",
+        "split_pay_method": "page_pay",
     }
     assert [(method, url) for method, url, _ in session.calls] == [
         ("GET", API_USER_INFO),
         ("GET", API_BUY_PREVIEW),
         ("POST", API_BUY),
-        ("GET", API_SPLIT_PAY_PREVIEW),
-        ("POST", API_SPLIT_PAY),
+        ("GET", API_PAGE_PAY),
         ("GET", API_BILL_ORDER_BATCH_INFO),
     ]
     payload = json.loads(session.calls[2][2]["data"])
     assert payload["pay_method"] == PAY_METHOD_BALANCE
-    split_payload = json.loads(session.calls[4][2]["data"])
-    assert split_payload == {
-        "game": "csgo",
-        "amount": "10.00",
-        "pay_method": PAY_METHOD_BALANCE_NOT_FROZEN,
-        "bill_order_id": "balance-order",
-    }
 
 
 def test_legacy_balance_execute_allows_preview_without_balance_method():
@@ -1235,16 +1217,7 @@ def test_legacy_balance_execute_allows_preview_without_balance_method():
             ],
         ),
         FakeResponse({"code": "OK", "data": {"id": "balance-order", "price": "10.00"}}),
-        FakeResponse(
-            {
-                "code": "OK",
-                "data": {
-                    "remained_price": "10.00",
-                    "pay_methods": [{"value": PAY_METHOD_BALANCE_NOT_FROZEN}],
-                },
-            }
-        ),
-        FakeResponse({"code": "OK", "data": {}}),
+        FakeResponse({"code": "OK", "data": {"auto_pay": True}}),
         FakeResponse(
             {"code": "OK", "data": {"items": [{"state": "SUCCESS"}]}}
         ),
@@ -1261,30 +1234,35 @@ def test_legacy_balance_execute_allows_preview_without_balance_method():
     assert [(method, url) for method, url, _ in session.calls] == [
         ("GET", API_BUY_PREVIEW),
         ("POST", API_BUY),
-        ("GET", API_SPLIT_PAY_PREVIEW),
-        ("POST", API_SPLIT_PAY),
+        ("GET", API_PAGE_PAY),
         ("GET", API_BILL_ORDER_BATCH_INFO),
     ]
     payload = json.loads(session.calls[1][2]["data"])
     assert payload["pay_method"] == PAY_METHOD_BALANCE
 
 
-def test_balance_checkout_allows_preview_without_balance_method():
+def test_balance_checkout_does_not_split_pay_external_preview_methods():
     session = FakeSession(
         *checkout_responses(
             FakeResponse({"code": "OK", "data": {"id": "balance-order", "price": "10.00"}}),
+            FakeResponse({"code": "OK", "data": {"auto_pay": False}}),
             FakeResponse(
                 {
                     "code": "OK",
                     "data": {
                         "remained_price": "10.00",
-                        "pay_methods": [{"value": PAY_METHOD_BALANCE_NOT_FROZEN}],
+                        "pay_methods": [
+                            {"value": 44, "selected": True, "enough": True},
+                            {"value": PAY_METHOD_WECHAT, "btn_clickable": True},
+                        ],
                     },
                 }
             ),
-            FakeResponse({"code": "OK", "data": {}}),
             FakeResponse(
-                {"code": "OK", "data": {"items": [{"progress": 305}]}}
+                {
+                    "code": "OK",
+                    "data": {"items": [{"state": "PAYING", "pay_method": 70}]},
+                }
             ),
             pay_method=PAY_METHOD_BALANCE,
             pay_methods=[
@@ -1302,14 +1280,16 @@ def test_balance_checkout_allows_preview_without_balance_method():
 
     result = buyer.lock_and_get_pay_url("csgo", 1, "sell-order", "10.00")
 
-    assert result["success"] is True
+    assert result["success"] is False
     assert result["pay_type"] == "balance"
+    assert result["payment_state"] == "pending"
+    assert result["balance_pay_stage"] == "page_pay"
     assert [(method, url) for method, url, _ in session.calls] == [
         ("GET", API_USER_INFO),
         ("GET", API_BUY_PREVIEW),
         ("POST", API_BUY),
+        ("GET", API_PAGE_PAY),
         ("GET", API_SPLIT_PAY_PREVIEW),
-        ("POST", API_SPLIT_PAY),
         ("GET", API_BILL_ORDER_BATCH_INFO),
     ]
     payload = json.loads(session.calls[2][2]["data"])
@@ -1320,6 +1300,7 @@ def test_balance_split_pay_failure_returns_created_pending():
     session = FakeSession(
         *checkout_responses(
             FakeResponse({"code": "OK", "data": {"id": "balance-pending", "price": "10.00"}}),
+            FakeResponse({"code": "OK", "data": {"auto_pay": False}}),
             FakeResponse(
                 {
                     "code": "OK",
@@ -1347,10 +1328,12 @@ def test_balance_split_pay_failure_returns_created_pending():
     assert result["created"] is True
     assert result["payment_state"] == "pending"
     assert result["order_id"] == "balance-pending"
+    assert result["balance_pay_stage"] == "split_pay"
     assert [(method, url) for method, url, _ in session.calls] == [
         ("GET", API_USER_INFO),
         ("GET", API_BUY_PREVIEW),
         ("POST", API_BUY),
+        ("GET", API_PAGE_PAY),
         ("GET", API_SPLIT_PAY_PREVIEW),
         ("POST", API_SPLIT_PAY),
     ]

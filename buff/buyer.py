@@ -176,7 +176,19 @@ def _html_looks_like_login(text: str) -> bool:
 PAY_METHOD_ALIPAY = 51
 PAY_METHOD_WECHAT = 6
 PAY_METHOD_BALANCE = 79
+PAY_METHOD_EPAY_BALANCE = 1
+PAY_METHOD_ALIPAY_BALANCE = 3
 PAY_METHOD_BALANCE_NOT_FROZEN = 43
+PAY_METHOD_BALANCE_SUCCESS_PROGRESS = {"105", "106", "202", "305", "309"}
+PAY_METHOD_BALANCE_AUTO_DEDUCT = {
+    PAY_METHOD_EPAY_BALANCE,
+    PAY_METHOD_ALIPAY_BALANCE,
+    PAY_METHOD_BALANCE_NOT_FROZEN,
+    59,
+    61,
+    63,
+    66,
+}
 PAY_METHOD_EPAY_PAGE = 44
 PAY_METHOD_EPAY_APP = 45
 
@@ -882,7 +894,7 @@ class BuffBuyer:
         # server-side wallet deduction is finalized.
         if state in {"TO_DELIVER", "SUCCESS"}:
             return True
-        if progress in {"105", "106", "202", "305", "309"}:
+        if progress in PAY_METHOD_BALANCE_SUCCESS_PROGRESS:
             return True
         if mode in {"5", "7", "8"} and progress in {"202", "305", "309"}:
             return True
@@ -961,9 +973,24 @@ class BuffBuyer:
         )
 
     @staticmethod
+    def _split_pay_method_available(item: dict) -> bool:
+        if not isinstance(item, dict):
+            return False
+        if item.get("disabled") is True:
+            return False
+        if item.get("btn_clickable") is False:
+            return False
+        if item.get("enough") is False:
+            return False
+        if item.get("error"):
+            return False
+        return True
+
+    @staticmethod
     def _select_balance_split_pay_method(preview_data: dict) -> int:
         pay_methods = preview_data.get("pay_methods")
         if isinstance(pay_methods, list):
+            parsed_methods = []
             for item in pay_methods:
                 if not isinstance(item, dict):
                     continue
@@ -971,29 +998,183 @@ class BuffBuyer:
                     value = int(item.get("value"))
                 except (TypeError, ValueError):
                     continue
-                if value == PAY_METHOD_BALANCE_NOT_FROZEN and (
-                    item.get("selected") is True
-                    or item.get("btn_clickable") is not False
-                    or item.get("disabled") is not True
-                ):
+                if BuffBuyer._split_pay_method_available(item):
+                    parsed_methods.append((value, item))
+            # When an order was created with pay_method=79, BUFF's normal web
+            # flow first opens page_pay. If the wallet can cover the order,
+            # page_pay auto-deducts the balance. The split-pay popup is only for
+            # adding external payments to a still-unpaid order, so do not choose
+            # selected external methods like 44/6 for pure balance checkout.
+            balance_methods = PAY_METHOD_BALANCE_AUTO_DEDUCT
+            for preferred in (
+                PAY_METHOD_BALANCE_NOT_FROZEN,
+                PAY_METHOD_EPAY_BALANCE,
+                PAY_METHOD_ALIPAY_BALANCE,
+                59,
+                61,
+                63,
+                66,
+            ):
+                if any(value == preferred for value, _item in parsed_methods):
+                    return preferred
+            for value, item in parsed_methods:
+                if value in balance_methods and item.get("selected") is True:
                     return value
-            for item in pay_methods:
-                if not isinstance(item, dict):
-                    continue
-                try:
-                    value = int(item.get("value"))
-                except (TypeError, ValueError):
-                    continue
-                if value in {PAY_METHOD_EPAY_PAGE, PAY_METHOD_EPAY_APP} and (
-                    item.get("selected") is True
-                    or item.get("btn_clickable") is not False
-                    or item.get("disabled") is not True
-                ):
+            for value, item in parsed_methods:
+                if item.get("selected") is True:
                     return value
-        # BUFF's normal balance checkout creates an epay balance-backed bill.
-        # In the split-pay popup the immediate wallet deduction uses
-        # BALANCE_NOT_FROZEN (43), not the original buy API value 79.
+            if parsed_methods:
+                return parsed_methods[0][0]
         return PAY_METHOD_BALANCE_NOT_FROZEN
+
+    def _balance_payment_result_is_finished(self, result: dict) -> bool:
+        if not isinstance(result, dict):
+            return False
+        if result.get("success") is True:
+            return True
+        state = str(result.get("payment_state") or "").strip().lower()
+        code = str(result.get("code") or "").strip().upper()
+        return state in {"paid", "failed"} or code == "BALANCE_PAYMENT_FAILED"
+
+    def _auto_pay_balance_bill_order(self, game: str, bill_order_id: str) -> dict:
+        """Open BUFF's page_pay endpoint, which auto-deducts wallet balance.
+
+        BUFF's web client calls /page_pay after /goods/buy. For wallet-backed
+        orders the response may contain auto_pay=true and no external URL; the
+        server-side deduction is finalized asynchronously and must be confirmed
+        through batch/info.
+        """
+
+        params = {
+            "bill_order_id": str(bill_order_id),
+            "_": str(int(time.time() * 1000)),
+        }
+        headers = {
+            "Referer": f"https://buff.163.com/market/buy_order/history?game={game}"
+        }
+        res = self._make_request(
+            "GET",
+            API_PAGE_PAY,
+            params=params,
+            headers=headers,
+            with_cashier_trace_id=True,
+        )
+        if res.get("code") != "OK":
+            msg = res.get("error") or res.get("msg") or res.get("code")
+            last_status = self._get_bill_order_status(game, bill_order_id)
+            if self._is_balance_split_pay_success_from_order(last_status or {}):
+                return {
+                    "success": True,
+                    "pay_url": None,
+                    "pay_type": "balance",
+                    "payment_state": "paid",
+                    "order_id": bill_order_id,
+                    "balance_pay_stage": "page_pay",
+                    "msg": msg,
+                }
+            if self._is_balance_split_pay_failure_from_order(last_status or {}):
+                return {
+                    "success": False,
+                    "code": "BALANCE_PAYMENT_FAILED",
+                    "created": True,
+                    "pay_url": None,
+                    "pay_type": "balance",
+                    "payment_state": "failed",
+                    "order_id": bill_order_id,
+                    "msg": self._format_bill_order_status_message(
+                        last_status,
+                        fallback=str(msg or "余额 page_pay 后 BUFF 订单进入失败/超时状态"),
+                    ),
+                    "balance_pay_stage": "page_pay",
+                }
+            return {
+                "success": False,
+                "code": "BALANCE_PAYMENT_PENDING",
+                "created": True,
+                "pay_url": None,
+                "payment_state": "pending",
+                "pay_type": "balance",
+                "order_id": bill_order_id,
+                "msg": msg,
+                "balance_pay_stage": "page_pay",
+            }
+        data = res.get("data") if isinstance(res.get("data"), dict) else {}
+        if data.get("auto_pay") is False:
+            return {
+                "success": False,
+                "code": "BALANCE_PAYMENT_PENDING",
+                "created": True,
+                "pay_url": None,
+                "payment_state": "pending",
+                "pay_type": "balance",
+                "order_id": bill_order_id,
+                "msg": "BUFF page_pay 未自动核销余额，仍需外部支付",
+                "balance_pay_stage": "page_pay",
+            }
+        last_status = None
+        for attempt in range(8):
+            if attempt:
+                jittered_sleep(0.5)
+            last_status = self._get_bill_order_status(game, bill_order_id)
+            if self._is_balance_split_pay_success_from_order(last_status or {}):
+                return {
+                    "success": True,
+                    "pay_url": None,
+                    "pay_type": "balance",
+                    "payment_state": "paid",
+                    "order_id": bill_order_id,
+                    "balance_pay_stage": "page_pay",
+                }
+            if self._is_balance_split_pay_failure_from_order(last_status or {}):
+                return {
+                    "success": False,
+                    "code": "BALANCE_PAYMENT_FAILED",
+                    "created": True,
+                    "pay_url": None,
+                    "pay_type": "balance",
+                    "payment_state": "failed",
+                    "order_id": bill_order_id,
+                    "msg": self._format_bill_order_status_message(
+                        last_status,
+                        fallback="余额 page_pay 后 BUFF 订单进入失败/超时状态",
+                    ),
+                    "balance_pay_stage": "page_pay",
+                }
+        return {
+            "success": False,
+            "code": "BALANCE_PAYMENT_PENDING",
+            "created": True,
+            "pay_url": None,
+            "pay_type": "balance",
+            "payment_state": "pending",
+            "order_id": bill_order_id,
+            "msg": self._format_bill_order_status_message(
+                last_status,
+                fallback="余额 page_pay 请求已发送，但未确认 BUFF 订单已付款",
+            ),
+            "balance_pay_stage": "page_pay",
+        }
+
+
+    @staticmethod
+    def _format_bill_order_status_message(item: Optional[dict], *, fallback: str) -> str:
+        if not isinstance(item, dict):
+            return fallback
+        parts = []
+        for key in (
+            "state_text",
+            "error_text",
+            "state",
+            "progress",
+            "pay_method_text",
+            "pay_expire_timeout",
+        ):
+            value = item.get(key)
+            if value not in (None, ""):
+                parts.append(f"{key}={value}")
+        if parts:
+            return f"{fallback} ({', '.join(parts)})"
+        return fallback
 
     def _pay_balance_bill_order(
         self,
@@ -1014,6 +1195,18 @@ class BuffBuyer:
                 "pay_type": "balance",
                 "msg": "余额支付缺少订单号",
             }
+
+        # This is the critical step used by BUFF's web checkout after
+        # /goods/buy with pay_method=79.  It opens the bill-order cashier page
+        # and lets BUFF auto-deduct wallet balance when possible.  Do this
+        # before split-pay preview/pay: the split-pay dialog may select external
+        # methods such as 44/6 even for a wallet order and leaves the order in
+        # WAIT_PAY if the normal page_pay step was skipped.
+        page_pay_result = self._auto_pay_balance_bill_order(game, bill_order_id)
+        if self._balance_payment_result_is_finished(page_pay_result):
+            page_pay_result.setdefault("split_pay_method", "page_pay")
+            return page_pay_result
+
         amount_text = self._split_pay_amount_text(amount)
         if not amount_text:
             amount_text = self._split_pay_amount_text(price)
@@ -1024,26 +1217,15 @@ class BuffBuyer:
             bill_order_id,
         )
         if preview.get("code") != "OK":
-            return {
-                "success": False,
-                "code": "BALANCE_PAYMENT_PENDING",
-                "created": True,
-                "payment_state": "pending",
-                "pay_type": "balance",
-                "order_id": bill_order_id,
-                "msg": preview.get("error") or preview.get("msg") or preview.get("code"),
-            }
+            page_pay_result.setdefault(
+                "msg",
+                preview.get("error") or preview.get("msg") or preview.get("code"),
+            )
+            return page_pay_result
         preview_data = preview.get("data")
         if not isinstance(preview_data, dict):
-            return {
-                "success": False,
-                "code": "BALANCE_PAYMENT_PENDING",
-                "created": True,
-                "payment_state": "pending",
-                "pay_type": "balance",
-                "order_id": bill_order_id,
-                "msg": "余额立即支付预检返回格式异常",
-            }
+            page_pay_result.setdefault("msg", "余额立即支付预检返回格式异常")
+            return page_pay_result
         remained = preview_data.get("remained_price")
         if remained is not None:
             amount_text = self._split_pay_amount_text(remained)
@@ -1052,6 +1234,25 @@ class BuffBuyer:
         if not amount_text:
             amount_text = self._split_pay_amount_text(price)
         split_pay_method = self._select_balance_split_pay_method(preview_data)
+        if split_pay_method not in PAY_METHOD_BALANCE_AUTO_DEDUCT:
+            order_status = self._get_bill_order_status(game, bill_order_id)
+            status_pay_method = (order_status or {}).get("pay_method")
+            logger.warning(
+                "BUFF 余额订单 %s 的 split_pay 预检未返回可用余额方式，"
+                "已尝试 page_pay 自动核销，停止外部 split_pay 兜底；"
+                "split_pay_methods=%s status_pay_method=%s",
+                bill_order_id,
+                [
+                    item.get("value")
+                    for item in preview_data.get("pay_methods", [])
+                    if isinstance(item, dict)
+                ],
+                status_pay_method,
+            )
+            return page_pay_result
+        if not amount_text:
+            page_pay_result.setdefault("msg", "余额立即支付缺少支付金额")
+            return page_pay_result
         payload = {
             "game": str(game),
             "amount": amount_text,
@@ -1069,16 +1270,20 @@ class BuffBuyer:
             with_cashier_trace_id=True,
         )
         if res.get("code") != "OK":
-            return {
-                "success": False,
-                "code": "BALANCE_PAYMENT_PENDING",
-                "created": True,
-                "payment_state": "pending",
-                "pay_type": "balance",
-                "order_id": bill_order_id,
-                "msg": res.get("error") or res.get("msg") or res.get("code"),
-                "split_pay_method": split_pay_method,
-            }
+            page_pay_result.update(
+                {
+                    "success": False,
+                    "code": "BALANCE_PAYMENT_PENDING",
+                    "created": True,
+                    "payment_state": "pending",
+                    "pay_type": "balance",
+                    "order_id": bill_order_id,
+                    "msg": res.get("error") or res.get("msg") or res.get("code"),
+                    "split_pay_method": split_pay_method,
+                    "balance_pay_stage": "split_pay",
+                }
+            )
+            return page_pay_result
         last_status = None
         for attempt in range(6):
             if attempt:
@@ -1092,6 +1297,7 @@ class BuffBuyer:
                     "payment_state": "paid",
                     "order_id": bill_order_id,
                     "split_pay_method": split_pay_method,
+                    "balance_pay_stage": "split_pay",
                 }
             if self._is_balance_split_pay_failure_from_order(last_status or {}):
                 return {
@@ -1102,8 +1308,12 @@ class BuffBuyer:
                     "pay_type": "balance",
                     "payment_state": "failed",
                     "order_id": bill_order_id,
-                    "msg": "余额立即支付后 BUFF 订单进入失败/超时状态",
+                    "msg": self._format_bill_order_status_message(
+                        last_status,
+                        fallback="余额立即支付后 BUFF 订单进入失败/超时状态",
+                    ),
                     "split_pay_method": split_pay_method,
+                    "balance_pay_stage": "split_pay",
                 }
         return {
             "success": False,
@@ -1113,8 +1323,12 @@ class BuffBuyer:
             "pay_type": "balance",
             "payment_state": "pending",
             "order_id": bill_order_id,
-            "msg": "余额立即支付请求已发送，但未确认 BUFF 订单已付款",
+            "msg": self._format_bill_order_status_message(
+                last_status,
+                fallback="余额立即支付请求已发送，但未确认 BUFF 订单已付款",
+            ),
             "split_pay_method": split_pay_method,
+            "balance_pay_stage": "split_pay",
         }
 
     def get_and_buy(
