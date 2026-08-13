@@ -586,10 +586,10 @@ class BuffBuyer:
         )
         if verified:
             steam_id = _normalize_server_identifier(user_info.get("steamid"))
-            if steam_id:
-                # BUFF's own selected/bound Steam account is authoritative for
-                # purchase preview and checkout.  Do not substitute an ID from
-                # an unrelated local Steam session.
+            if steam_id and not self.steam_id:
+                # 仅在外部没有显式指定 steam_id 时才回退到 BUFF 返回的默认值。
+                # 多绑 Steam 时，BUFF user/info 只返回默认那个，无法反映用户
+                # 在本项目 UI 中选择的收货 Steam。
                 self.steam_id = steam_id
         return verified
 

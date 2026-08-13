@@ -96,26 +96,59 @@ class BuffClient:
             return 0
 
     def _new_buyer(self, cookies: str, user_agent: Optional[str]) -> BuffBuyer:
+        # 优先使用本地"当前 Steam 账号"里配置的 steam_id 作为收货账号，
+        # 这样多绑 Steam 时 BUFF 下单请求的 steamid 字段能跟随用户在 UI
+        # 中的选择，而不是被 BUFF 服务端默认的第一个账号覆盖。
+        from app.accounts import get_current_account
+
+        override_sid = ""
+        try:
+            acc = get_current_account() or {}
+            override_sid = str(acc.get("steam_id") or "").strip()
+        except Exception:
+            override_sid = ""
+        effective_sid = override_sid or self._steam_id
         return BuffBuyer(
             cookies,
             pay_method=self._pay_method_id,
             user_agent=user_agent,
             account_id=BUFF_ACCOUNT_ID,
             request_timeout=self._timeout,
-            steam_id=self._steam_id,
+            steam_id=effective_sid,
         )
 
     def _ensure_current_buyer(self) -> BuffBuyer:
+        # 除了 BUFF 凭据本身，还要跟踪"本地当前 Steam 账号 steam_id"的变化。
+        # 用户在 UI 切换 Steam 账号后，即使 BUFF cookie/generation 没变，
+        # 也需要重建 buyer 以让新的收货 steam_id 立即生效。
+        from app.accounts import get_current_account
+
+        current_sid = ""
+        try:
+            acc = get_current_account() or {}
+            current_sid = str(acc.get("steam_id") or "").strip()
+        except Exception:
+            current_sid = ""
+
         if self._credentials_provider is None:
+            if current_sid and current_sid != (self._buyer.steam_id or ""):
+                old_buyer = self._buyer
+                self._buyer = self._new_buyer(self._cookies, self._user_agent)
+                close = getattr(old_buyer, "close", None)
+                if callable(close):
+                    close()
             return self._buyer
+
         credentials = self._credentials_provider() or {}
         generation = self._as_generation(credentials.get("generation"))
         cookies = str(credentials.get("cookies") or "")
         user_agent = str(credentials.get("user_agent") or "").strip() or None
+        buyer_sid = (self._buyer.steam_id or "") if self._buyer is not None else ""
         if (
             generation == self._credential_generation
             and cookies == self._cookies
             and user_agent == self._user_agent
+            and (not current_sid or current_sid == buyer_sid)
         ):
             return self._buyer
 
