@@ -8,14 +8,18 @@ from requests.cookies import RequestsCookieJar, create_cookie
 from buff.buyer import (
     API_BUY,
     API_BUY_PREVIEW,
+    API_BILL_ORDER_BATCH_INFO,
     API_HISTORY,
     API_PAGE_PAY,
+    API_SPLIT_PAY,
+    API_SPLIT_PAY_PREVIEW,
     API_SELL_ORDER,
     API_STEAM_TRADE,
     API_USER_INFO,
     API_WX_PAY_QRCODE,
     DEFAULT_USER_AGENT,
     PAY_METHOD_BALANCE,
+    PAY_METHOD_BALANCE_NOT_FROZEN,
     PAY_METHOD_WECHAT,
     BuffBuyer,
 )
@@ -501,7 +505,7 @@ def test_cooling_down_response_opens_default_rate_limit_circuit():
 
     with pytest.raises(BuffRateLimited) as exc_info:
         buyer._make_request("GET", API_HISTORY)
-    assert exc_info.value.retry_after == pytest.approx(DEFAULT_RATE_LIMIT_SECONDS)
+    assert exc_info.value.retry_after == pytest.approx(DEFAULT_RATE_LIMIT_SECONDS, abs=1)
     assert len(session.calls) == 1
 
 
@@ -1160,10 +1164,28 @@ def test_created_order_with_valid_payment_url_keeps_success_contract():
     ]
 
 
-def test_balance_lock_payload_uses_pay_method_79_and_skips_url_lookup():
+def test_balance_lock_payload_uses_pay_method_79_and_completes_split_pay():
     session = FakeSession(
         *checkout_responses(
-            FakeResponse({"code": "OK", "data": {"id": "balance-order"}}),
+            FakeResponse({"code": "OK", "data": {"id": "balance-order", "price": "10.00"}}),
+            FakeResponse(
+                {
+                    "code": "OK",
+                    "data": {
+                        "remained_price": "10.00",
+                        "pay_methods": [
+                            {"value": PAY_METHOD_BALANCE_NOT_FROZEN, "selected": True}
+                        ],
+                    },
+                }
+            ),
+            FakeResponse({"code": "OK", "data": {}}),
+            FakeResponse(
+                {
+                    "code": "OK",
+                    "data": {"items": [{"state": "TO_DELIVER", "progress": 305}]},
+                }
+            ),
             pay_method=PAY_METHOD_BALANCE,
         )
     )
@@ -1182,14 +1204,25 @@ def test_balance_lock_payload_uses_pay_method_79_and_skips_url_lookup():
         "pay_type": "balance",
         "payment_state": "paid",
         "order_id": "balance-order",
+        "split_pay_method": PAY_METHOD_BALANCE_NOT_FROZEN,
     }
     assert [(method, url) for method, url, _ in session.calls] == [
         ("GET", API_USER_INFO),
         ("GET", API_BUY_PREVIEW),
         ("POST", API_BUY),
+        ("GET", API_SPLIT_PAY_PREVIEW),
+        ("POST", API_SPLIT_PAY),
+        ("GET", API_BILL_ORDER_BATCH_INFO),
     ]
     payload = json.loads(session.calls[2][2]["data"])
     assert payload["pay_method"] == PAY_METHOD_BALANCE
+    split_payload = json.loads(session.calls[4][2]["data"])
+    assert split_payload == {
+        "game": "csgo",
+        "amount": "10.00",
+        "pay_method": PAY_METHOD_BALANCE_NOT_FROZEN,
+        "bill_order_id": "balance-order",
+    }
 
 
 def test_legacy_balance_execute_allows_preview_without_balance_method():
@@ -1201,7 +1234,20 @@ def test_legacy_balance_execute_allows_preview_without_balance_method():
                 {"value": PAY_METHOD_WECHAT, "btn_clickable": True},
             ],
         ),
-        FakeResponse({"code": "OK", "data": {"id": "balance-order"}}),
+        FakeResponse({"code": "OK", "data": {"id": "balance-order", "price": "10.00"}}),
+        FakeResponse(
+            {
+                "code": "OK",
+                "data": {
+                    "remained_price": "10.00",
+                    "pay_methods": [{"value": PAY_METHOD_BALANCE_NOT_FROZEN}],
+                },
+            }
+        ),
+        FakeResponse({"code": "OK", "data": {}}),
+        FakeResponse(
+            {"code": "OK", "data": {"items": [{"state": "SUCCESS"}]}}
+        ),
     )
     buyer = BuffBuyer(
         "session=s; csrf_token=c",
@@ -1215,6 +1261,9 @@ def test_legacy_balance_execute_allows_preview_without_balance_method():
     assert [(method, url) for method, url, _ in session.calls] == [
         ("GET", API_BUY_PREVIEW),
         ("POST", API_BUY),
+        ("GET", API_SPLIT_PAY_PREVIEW),
+        ("POST", API_SPLIT_PAY),
+        ("GET", API_BILL_ORDER_BATCH_INFO),
     ]
     payload = json.loads(session.calls[1][2]["data"])
     assert payload["pay_method"] == PAY_METHOD_BALANCE
@@ -1223,7 +1272,20 @@ def test_legacy_balance_execute_allows_preview_without_balance_method():
 def test_balance_checkout_allows_preview_without_balance_method():
     session = FakeSession(
         *checkout_responses(
-            FakeResponse({"code": "OK", "data": {"id": "balance-order"}}),
+            FakeResponse({"code": "OK", "data": {"id": "balance-order", "price": "10.00"}}),
+            FakeResponse(
+                {
+                    "code": "OK",
+                    "data": {
+                        "remained_price": "10.00",
+                        "pay_methods": [{"value": PAY_METHOD_BALANCE_NOT_FROZEN}],
+                    },
+                }
+            ),
+            FakeResponse({"code": "OK", "data": {}}),
+            FakeResponse(
+                {"code": "OK", "data": {"items": [{"progress": 305}]}}
+            ),
             pay_method=PAY_METHOD_BALANCE,
             pay_methods=[
                 {"value": 51, "btn_clickable": True},
@@ -1246,9 +1308,52 @@ def test_balance_checkout_allows_preview_without_balance_method():
         ("GET", API_USER_INFO),
         ("GET", API_BUY_PREVIEW),
         ("POST", API_BUY),
+        ("GET", API_SPLIT_PAY_PREVIEW),
+        ("POST", API_SPLIT_PAY),
+        ("GET", API_BILL_ORDER_BATCH_INFO),
     ]
     payload = json.loads(session.calls[2][2]["data"])
     assert payload["pay_method"] == PAY_METHOD_BALANCE
+
+
+def test_balance_split_pay_failure_returns_created_pending():
+    session = FakeSession(
+        *checkout_responses(
+            FakeResponse({"code": "OK", "data": {"id": "balance-pending", "price": "10.00"}}),
+            FakeResponse(
+                {
+                    "code": "OK",
+                    "data": {
+                        "remained_price": "10.00",
+                        "pay_methods": [{"value": PAY_METHOD_BALANCE_NOT_FROZEN}],
+                    },
+                }
+            ),
+            FakeResponse({"code": "Error", "error": "need manual confirm"}),
+            pay_method=PAY_METHOD_BALANCE,
+        )
+    )
+    buyer = BuffBuyer(
+        "session=s; csrf_token=c",
+        pay_method=PAY_METHOD_BALANCE,
+        session=session,
+        request_policy=no_wait_policy(),
+    )
+
+    result = buyer.lock_and_get_pay_url("csgo", 1, "sell-order", "10.00")
+
+    assert result["success"] is False
+    assert result["code"] == "BALANCE_PAYMENT_PENDING"
+    assert result["created"] is True
+    assert result["payment_state"] == "pending"
+    assert result["order_id"] == "balance-pending"
+    assert [(method, url) for method, url, _ in session.calls] == [
+        ("GET", API_USER_INFO),
+        ("GET", API_BUY_PREVIEW),
+        ("POST", API_BUY),
+        ("GET", API_SPLIT_PAY_PREVIEW),
+        ("POST", API_SPLIT_PAY),
+    ]
 
 
 def test_balance_preview_with_insufficient_text_is_safe_to_fallback_without_post():

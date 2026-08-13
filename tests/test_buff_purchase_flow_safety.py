@@ -1375,6 +1375,41 @@ def test_balance_paid_order_is_recorded_without_manual_confirmation(monkeypatch)
     assert purchases[0]["buff_order_id"] == "bill-balance"
 
 
+def test_balance_order_without_paid_state_is_not_recorded(monkeypatch):
+    class BuffClient:
+        _pay_method = "balance"
+
+        def lock_and_get_pay_url(self, *_args, **_kwargs):
+            return {
+                "success": True,
+                "order_id": "bill-balance-pending",
+                "pay_url": None,
+                "pay_type": "balance",
+            }
+
+        def ask_seller_to_send(self, *_args):
+            raise AssertionError("pending balance order must not be recorded")
+
+    kwargs, pending, purchases = _checkout_args(wait_result=False)
+    monkeypatch.setattr(
+        steps,
+        "_fetch_smart_market_price",
+        lambda *_args, **_kwargs: None,
+    )
+
+    with pytest.raises(steps.PurchaseOrderCreatedPending):
+        steps.lock_and_confirm_payment(
+            BuffClient(),
+            _item([{"id": "sell-1", "price": "10.0"}]),
+            _config("balance"),
+            **kwargs,
+        )
+
+    assert pending == []
+    assert purchases == []
+
+
+
 def test_balance_insufficient_preview_uses_configured_fallback(monkeypatch):
     class BuffClient:
         _pay_method = "balance"

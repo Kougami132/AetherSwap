@@ -2063,10 +2063,11 @@ def lock_and_confirm_payment(
             )
         payment_state = str(result.get("payment_state") or "").strip().lower()
         pay_type = str(result.get("pay_type") or "").strip().lower()
-        if pay_type == "balance" or payment_state == "paid":
+        if payment_state == "paid":
             if log_fn:
+                pay_label = "余额支付" if pay_type == "balance" else "支付"
                 log_fn(
-                    f"[Buff]   → 余额支付已完成 order_id={order_id}，记录成交",
+                    f"[Buff]   → {pay_label}已完成 order_id={order_id}，记录成交",
                     "info",
                 )
             identity = _checkout_credential_identity(buff_client)
@@ -2078,7 +2079,7 @@ def lock_and_confirm_payment(
                 credential_fingerprint=str(
                     identity.get("credential_fingerprint") or ""
                 ),
-                reason="BUFF 余额支付已完成",
+                reason="BUFF 支付已完成",
             )
             paid = _record_single_purchase_after_payment(
                 buff_client,

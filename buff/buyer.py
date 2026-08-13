@@ -176,6 +176,9 @@ def _html_looks_like_login(text: str) -> bool:
 PAY_METHOD_ALIPAY = 51
 PAY_METHOD_WECHAT = 6
 PAY_METHOD_BALANCE = 79
+PAY_METHOD_BALANCE_NOT_FROZEN = 43
+PAY_METHOD_EPAY_PAGE = 44
+PAY_METHOD_EPAY_APP = 45
 
 PAY_METHOD_NAMES = {
     "alipay": PAY_METHOD_ALIPAY,
@@ -218,6 +221,9 @@ API_SELL_ORDER = "https://buff.163.com/api/market/goods/sell_order"
 API_GOODS = "https://buff.163.com/api/market/goods"
 API_BUY_PREVIEW = "https://buff.163.com/api/market/goods/buy/preview"
 API_BUY = "https://buff.163.com/api/market/goods/buy"
+API_SPLIT_PAY_PREVIEW = "https://buff.163.com/api/market/goods/buy/split_pay/preview"
+API_SPLIT_PAY = "https://buff.163.com/api/market/bill_order/split_pay/pay"
+API_BILL_ORDER_BATCH_INFO = "https://buff.163.com/api/market/bill_order/batch/info"
 API_PAGE_PAY = "https://buff.163.com/api/market/bill_order/page_pay"
 API_WX_PAY_QRCODE = "https://buff.163.com/api/market/bill_order/wx_pay_qrcode"
 API_BATCH_WX_PAY_QRCODE = "https://buff.163.com/api/market/goods/batch_buy/wx_pay_qrcode"
@@ -677,10 +683,34 @@ class BuffBuyer:
             if items:
                 logger.info("检测到 %d 个待付款订单，正在获取支付链接...", len(items))
                 for item in items:
-                    if self.pay_method == PAY_METHOD_WECHAT:
-                        self._fetch_wechat_url(game, item["id"])
+                    order_id = str(item.get("id") or "")
+                    if self.pay_method == PAY_METHOD_BALANCE:
+                        price = (
+                            item.get("price")
+                            or item.get("real_price")
+                            or item.get("amount")
+                            or item.get("pay_amount")
+                            or ""
+                        )
+                        result = self._pay_balance_bill_order(
+                            game,
+                            order_id,
+                            str(price),
+                            sell_order_id=str(item.get("sell_order_id") or ""),
+                            price=str(price),
+                        )
+                        if result.get("success") and result.get("payment_state") == "paid":
+                            logger.info("余额待付款订单 %s 已完成立即支付", order_id)
+                        else:
+                            logger.warning(
+                                "余额待付款订单 %s 未确认完成: %s",
+                                order_id,
+                                result.get("msg") or result.get("code"),
+                            )
+                    elif self.pay_method == PAY_METHOD_WECHAT:
+                        self._fetch_wechat_url(game, order_id)
                     else:
-                        self._fetch_pay_url(game, item["id"])
+                        self._fetch_pay_url(game, order_id)
                 return True
             return False
         except (BuffAuthExpired, BuffRequestBlocked):
@@ -833,6 +863,260 @@ class BuffBuyer:
     def _preview_balance_is_insufficient(self, preview_data: dict) -> bool:
         return _is_balance_insufficient_text(self._preview_balance_error(preview_data))
 
+    @staticmethod
+    def _split_pay_amount_text(value) -> str:
+        try:
+            return f"{float(value):.2f}"
+        except (TypeError, ValueError):
+            return str(value or "").strip()
+
+    @staticmethod
+    def _is_balance_split_pay_success_from_order(item: dict) -> bool:
+        if not isinstance(item, dict):
+            return False
+        state = str(item.get("state") or "").strip().upper()
+        progress = str(item.get("progress") or "").strip()
+        mode = str(item.get("mode") or "").strip()
+        # Mirrors BUFF's normal-buy polling success predicate for single bill
+        # orders.  Balance checkout can transition through PAYING before the
+        # server-side wallet deduction is finalized.
+        if state in {"TO_DELIVER", "SUCCESS"}:
+            return True
+        if progress in {"105", "106", "202", "305", "309"}:
+            return True
+        if mode in {"5", "7", "8"} and progress in {"202", "305", "309"}:
+            return True
+        return False
+
+    @staticmethod
+    def _is_balance_split_pay_failure_from_order(item: dict) -> bool:
+        if not isinstance(item, dict):
+            return False
+        state = str(item.get("state") or "").strip().upper()
+        progress = str(item.get("progress") or "").strip()
+        if state in {"FAIL", "FAILURE", "CANCELED", "CANCELLED"}:
+            return True
+        if progress == "104":
+            return True
+        try:
+            expires = float(item.get("pay_expire_timeout", 0))
+        except (TypeError, ValueError):
+            expires = 0
+        return progress == "102" and expires < 0
+
+    def _get_bill_order_status(self, game: str, bill_order_id: str) -> Optional[dict]:
+        params = {
+            "bill_orders": str(bill_order_id),
+            "_": str(int(time.time() * 1000)),
+        }
+        headers = {
+            "Referer": f"https://buff.163.com/market/buy_order/history?game={game}"
+        }
+        res = self._make_request(
+            "GET", API_BILL_ORDER_BATCH_INFO, params=params, headers=headers
+        )
+        if res.get("code") != "OK":
+            logger.debug(
+                "BUFF 余额订单状态查询未返回 OK order_id=%s code=%s msg=%s",
+                bill_order_id,
+                res.get("code"),
+                res.get("error") or res.get("msg"),
+            )
+            return None
+        data = res.get("data")
+        items = data.get("items") if isinstance(data, dict) else None
+        if not isinstance(items, list) or len(items) != 1:
+            return None
+        item = items[0]
+        return item if isinstance(item, dict) else None
+
+    def _balance_bill_order_is_paid(self, game: str, bill_order_id: str) -> bool:
+        item = self._get_bill_order_status(game, bill_order_id)
+        return self._is_balance_split_pay_success_from_order(item or {})
+
+    def preview_balance_split_pay(
+        self,
+        game: str,
+        sell_order_id: str,
+        price: str,
+        bill_order_id: str,
+        *,
+        appid: int = 730,
+    ) -> dict:
+        params = {
+            "price": str(price),
+            "appid": str(appid),
+            "bill_order_id": str(bill_order_id),
+            "sell_order_id": str(sell_order_id),
+            "_": str(int(time.time() * 1000)),
+        }
+        headers = {
+            "Referer": f"https://buff.163.com/market/buy_order/history?game={game}"
+        }
+        return self._make_request(
+            "GET",
+            API_SPLIT_PAY_PREVIEW,
+            params=params,
+            headers=headers,
+        )
+
+    @staticmethod
+    def _select_balance_split_pay_method(preview_data: dict) -> int:
+        pay_methods = preview_data.get("pay_methods")
+        if isinstance(pay_methods, list):
+            for item in pay_methods:
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    value = int(item.get("value"))
+                except (TypeError, ValueError):
+                    continue
+                if value == PAY_METHOD_BALANCE_NOT_FROZEN and (
+                    item.get("selected") is True
+                    or item.get("btn_clickable") is not False
+                    or item.get("disabled") is not True
+                ):
+                    return value
+            for item in pay_methods:
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    value = int(item.get("value"))
+                except (TypeError, ValueError):
+                    continue
+                if value in {PAY_METHOD_EPAY_PAGE, PAY_METHOD_EPAY_APP} and (
+                    item.get("selected") is True
+                    or item.get("btn_clickable") is not False
+                    or item.get("disabled") is not True
+                ):
+                    return value
+        # BUFF's normal balance checkout creates an epay balance-backed bill.
+        # In the split-pay popup the immediate wallet deduction uses
+        # BALANCE_NOT_FROZEN (43), not the original buy API value 79.
+        return PAY_METHOD_BALANCE_NOT_FROZEN
+
+    def _pay_balance_bill_order(
+        self,
+        game: str,
+        bill_order_id: str,
+        amount: str,
+        *,
+        sell_order_id: str = "",
+        price: Optional[str] = None,
+    ) -> dict:
+        bill_order_id = _normalize_server_identifier(bill_order_id)
+        if not bill_order_id:
+            return {
+                "success": False,
+                "code": "BALANCE_PAYMENT_PENDING",
+                "created": True,
+                "payment_state": "pending",
+                "pay_type": "balance",
+                "msg": "余额支付缺少订单号",
+            }
+        amount_text = self._split_pay_amount_text(amount)
+        if not amount_text:
+            amount_text = self._split_pay_amount_text(price)
+        preview = self.preview_balance_split_pay(
+            game,
+            sell_order_id,
+            amount_text or price or "",
+            bill_order_id,
+        )
+        if preview.get("code") != "OK":
+            return {
+                "success": False,
+                "code": "BALANCE_PAYMENT_PENDING",
+                "created": True,
+                "payment_state": "pending",
+                "pay_type": "balance",
+                "order_id": bill_order_id,
+                "msg": preview.get("error") or preview.get("msg") or preview.get("code"),
+            }
+        preview_data = preview.get("data")
+        if not isinstance(preview_data, dict):
+            return {
+                "success": False,
+                "code": "BALANCE_PAYMENT_PENDING",
+                "created": True,
+                "payment_state": "pending",
+                "pay_type": "balance",
+                "order_id": bill_order_id,
+                "msg": "余额立即支付预检返回格式异常",
+            }
+        remained = preview_data.get("remained_price")
+        if remained is not None:
+            amount_text = self._split_pay_amount_text(remained)
+        elif not amount_text:
+            amount_text = self._split_pay_amount_text(preview_data.get("price"))
+        if not amount_text:
+            amount_text = self._split_pay_amount_text(price)
+        split_pay_method = self._select_balance_split_pay_method(preview_data)
+        payload = {
+            "game": str(game),
+            "amount": amount_text,
+            "pay_method": split_pay_method,
+            "bill_order_id": bill_order_id,
+        }
+        headers = {
+            "Referer": f"https://buff.163.com/market/buy_order/history?game={game}"
+        }
+        res = self._make_request(
+            "POST",
+            API_SPLIT_PAY,
+            headers=headers,
+            data=json.dumps(payload),
+            with_cashier_trace_id=True,
+        )
+        if res.get("code") != "OK":
+            return {
+                "success": False,
+                "code": "BALANCE_PAYMENT_PENDING",
+                "created": True,
+                "payment_state": "pending",
+                "pay_type": "balance",
+                "order_id": bill_order_id,
+                "msg": res.get("error") or res.get("msg") or res.get("code"),
+                "split_pay_method": split_pay_method,
+            }
+        last_status = None
+        for attempt in range(6):
+            if attempt:
+                jittered_sleep(0.5)
+            last_status = self._get_bill_order_status(game, bill_order_id)
+            if self._is_balance_split_pay_success_from_order(last_status or {}):
+                return {
+                    "success": True,
+                    "pay_url": None,
+                    "pay_type": "balance",
+                    "payment_state": "paid",
+                    "order_id": bill_order_id,
+                    "split_pay_method": split_pay_method,
+                }
+            if self._is_balance_split_pay_failure_from_order(last_status or {}):
+                return {
+                    "success": False,
+                    "code": "BALANCE_PAYMENT_FAILED",
+                    "created": True,
+                    "pay_url": None,
+                    "pay_type": "balance",
+                    "payment_state": "failed",
+                    "order_id": bill_order_id,
+                    "msg": "余额立即支付后 BUFF 订单进入失败/超时状态",
+                    "split_pay_method": split_pay_method,
+                }
+        return {
+            "success": False,
+            "code": "BALANCE_PAYMENT_PENDING",
+            "created": True,
+            "pay_url": None,
+            "pay_type": "balance",
+            "payment_state": "pending",
+            "order_id": bill_order_id,
+            "msg": "余额立即支付请求已发送，但未确认 BUFF 订单已付款",
+            "split_pay_method": split_pay_method,
+        }
+
     def get_and_buy(
         self,
         goods_id: int,
@@ -948,7 +1232,22 @@ class BuffBuyer:
                     )
                 logger.info("锁单成功！订单号: %s", new_order_id)
                 if self.pay_method == PAY_METHOD_BALANCE:
-                    return "SUCCESS"
+                    pay_result = self._pay_balance_bill_order(
+                        game,
+                        new_order_id,
+                        str(data.get("price") or price),
+                        sell_order_id=order_id,
+                        price=str(data.get("price") or price),
+                    )
+                    if pay_result.get("success") and pay_result.get("payment_state") == "paid":
+                        return "SUCCESS"
+                    logger.warning(
+                        "余额锁单已创建但立即支付未确认 order_id=%s code=%s msg=%s",
+                        new_order_id,
+                        pay_result.get("code"),
+                        pay_result.get("msg"),
+                    )
+                    return "FAIL"
                 if self.pay_method == PAY_METHOD_WECHAT:
                     jittered_sleep(0.5)
                     self._fetch_wechat_url(game, new_order_id)
@@ -1128,13 +1427,34 @@ class BuffBuyer:
                     raise error from exc
             pay_type = _pay_method_name(effective_pay_method)
             if effective_pay_method == PAY_METHOD_BALANCE:
-                return {
-                    "success": True,
-                    "pay_url": None,
-                    "pay_type": "balance",
-                    "payment_state": "paid",
-                    "order_id": new_order_id,
-                }
+                try:
+                    pay_result = self._pay_balance_bill_order(
+                        game,
+                        new_order_id,
+                        str(data.get("price") or price),
+                        sell_order_id=sell_order_id,
+                        price=str(data.get("price") or price),
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "BUFF 订单 %s 已创建，但余额立即支付失败: %s",
+                        new_order_id,
+                        exc,
+                    )
+                    pay_result = {
+                        "success": False,
+                        "code": "BALANCE_PAYMENT_PENDING",
+                        "created": True,
+                        "pay_url": None,
+                        "pay_type": "balance",
+                        "payment_state": "pending",
+                        "order_id": new_order_id,
+                        "msg": str(exc),
+                    }
+                pay_result.setdefault("pay_url", None)
+                pay_result.setdefault("pay_type", "balance")
+                pay_result.setdefault("order_id", new_order_id)
+                return pay_result
             try:
                 if effective_pay_method == PAY_METHOD_WECHAT:
                     jittered_sleep(0.5)
@@ -1338,3 +1658,4 @@ class BuffBuyer:
             return False
         logger.info("提醒卖家发货全部完成 %s/%s", len(ids), len(ids))
         return True
+

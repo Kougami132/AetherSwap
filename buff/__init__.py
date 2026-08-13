@@ -2,6 +2,9 @@ from .buyer import (
     DEFAULT_USER_AGENT,
     PAY_METHOD_ALIPAY,
     PAY_METHOD_BALANCE,
+    PAY_METHOD_BALANCE_NOT_FROZEN,
+    PAY_METHOD_EPAY_APP,
+    PAY_METHOD_EPAY_PAGE,
     PAY_METHOD_NAMES,
     PAY_METHOD_WECHAT,
     BuffBuyer,
@@ -32,6 +35,9 @@ __all__ = [
     "DEFAULT_USER_AGENT",
     "PAY_METHOD_ALIPAY",
     "PAY_METHOD_BALANCE",
+    "PAY_METHOD_BALANCE_NOT_FROZEN",
+    "PAY_METHOD_EPAY_APP",
+    "PAY_METHOD_EPAY_PAGE",
     "PAY_METHOD_NAMES",
     "PAY_METHOD_WECHAT",
     "BuffBuyer",
@@ -39,3 +45,4 @@ __all__ = [
     "get_global_policy",
     "reset_global_policy",
 ]
+
