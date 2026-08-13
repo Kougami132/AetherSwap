@@ -392,13 +392,16 @@ class BuffClient:
                     "code": "PREVIEW_INVALID",
                     "msg": "BUFF 购买预检返回格式异常",
                 }
-            error = buyer._preview_payment_error(data)
+            if self._pay_method == "balance":
+                error = buyer._preview_balance_error(data)
+            else:
+                error = buyer._preview_payment_error(data)
             if error:
                 code = "PAY_METHOD_UNAVAILABLE"
                 safe_to_fallback = False
                 if (
                     self._pay_method == "balance"
-                    and buyer._preview_balance_is_insufficient(data)
+                    and buyer.is_balance_insufficient_text(error)
                 ):
                     code = "BALANCE_INSUFFICIENT"
                     safe_to_fallback = True

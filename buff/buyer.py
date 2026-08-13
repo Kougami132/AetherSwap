@@ -810,13 +810,28 @@ class BuffBuyer:
             )
         return ""
 
-    def _preview_balance_is_insufficient(self, preview_data: dict) -> bool:
+    def _preview_balance_error(self, preview_data: dict) -> str:
         selected = self._payment_method_item(preview_data, PAY_METHOD_BALANCE)
-        if not isinstance(selected, dict) or selected.get("btn_clickable") is True:
-            return False
-        return _is_balance_insufficient_text(
-            selected.get("error") or selected.get("btn_text") or selected.get("message")
+        if not isinstance(selected, dict):
+            # BUFF's preview response may omit balance from pay_methods even
+            # though the checkout POST accepts pay_method=79.  Treat omission as
+            # inconclusive instead of blocking the read-only preflight.
+            return ""
+        if selected.get("btn_clickable") is True:
+            return ""
+        return str(
+            selected.get("error")
+            or selected.get("btn_text")
+            or selected.get("message")
+            or "BUFF 余额支付不可用"
         )
+
+    @staticmethod
+    def is_balance_insufficient_text(value) -> bool:
+        return _is_balance_insufficient_text(value)
+
+    def _preview_balance_is_insufficient(self, preview_data: dict) -> bool:
+        return _is_balance_insufficient_text(self._preview_balance_error(preview_data))
 
     def get_and_buy(
         self,
@@ -876,11 +891,12 @@ class BuffBuyer:
     ) -> str:
         preview = self.preview_buy(game, goods_id, order_id, price)
         preview_data = preview.get("data")
-        preview_error = (
-            self._preview_payment_error(preview_data)
-            if preview.get("code") == "OK" and isinstance(preview_data, dict)
-            else ""
-        )
+        preview_error = ""
+        if preview.get("code") == "OK" and isinstance(preview_data, dict):
+            if self.pay_method == PAY_METHOD_BALANCE:
+                preview_error = self._preview_balance_error(preview_data)
+            else:
+                preview_error = self._preview_payment_error(preview_data)
         if (
             preview.get("code") != "OK"
             or not isinstance(preview_data, dict)
@@ -931,6 +947,8 @@ class BuffBuyer:
                         url=API_BUY,
                     )
                 logger.info("锁单成功！订单号: %s", new_order_id)
+                if self.pay_method == PAY_METHOD_BALANCE:
+                    return "SUCCESS"
                 if self.pay_method == PAY_METHOD_WECHAT:
                     jittered_sleep(0.5)
                     self._fetch_wechat_url(game, new_order_id)
@@ -1025,13 +1043,25 @@ class BuffBuyer:
                 "created": False,
             }
         effective_pay_method = self.pay_method if pay_method is None else int(pay_method)
-        preview_error = self._preview_payment_error(preview_data, effective_pay_method)
+        if effective_pay_method == PAY_METHOD_BALANCE:
+            preview_error = self._preview_balance_error(preview_data)
+        else:
+            preview_error = self._preview_payment_error(preview_data, effective_pay_method)
         if preview_error:
+            code = "PAY_METHOD_UNAVAILABLE"
+            safe_to_fallback = False
+            if (
+                effective_pay_method == PAY_METHOD_BALANCE
+                and _is_balance_insufficient_text(preview_error)
+            ):
+                code = "BALANCE_INSUFFICIENT"
+                safe_to_fallback = True
             return {
                 "success": False,
-                "code": "PAY_METHOD_UNAVAILABLE",
+                "code": code,
                 "msg": preview_error,
                 "created": False,
+                "safe_to_fallback": safe_to_fallback,
             }
         payload = {
             "game": game,

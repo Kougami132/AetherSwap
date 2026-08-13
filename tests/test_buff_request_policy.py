@@ -108,28 +108,30 @@ def user_info_response(*, steam_id=STEAM_ID):
     )
 
 
-def buy_preview_response(*, pay_method=51, btn_clickable=True):
+def buy_preview_response(*, pay_method=51, btn_clickable=True, pay_methods=None):
+    if pay_methods is None:
+        pay_methods = [
+            {
+                "value": pay_method,
+                "btn_clickable": btn_clickable,
+            }
+        ]
     return FakeResponse(
         {
             "code": "OK",
             "data": {
-                "pay_methods": [
-                    {
-                        "value": pay_method,
-                        "btn_clickable": btn_clickable,
-                    }
-                ]
+                "pay_methods": pay_methods,
             },
         }
     )
 
 
-def checkout_responses(*after_preview, pay_method=51):
+def checkout_responses(*after_preview, pay_method=51, pay_methods=None):
     """Responses required before and after a single-item checkout POST."""
 
     return (
         user_info_response(),
-        buy_preview_response(pay_method=pay_method),
+        buy_preview_response(pay_method=pay_method, pay_methods=pay_methods),
         *after_preview,
     )
 
@@ -1188,6 +1190,193 @@ def test_balance_lock_payload_uses_pay_method_79_and_skips_url_lookup():
     ]
     payload = json.loads(session.calls[2][2]["data"])
     assert payload["pay_method"] == PAY_METHOD_BALANCE
+
+
+def test_legacy_balance_execute_allows_preview_without_balance_method():
+    session = FakeSession(
+        buy_preview_response(
+            pay_method=PAY_METHOD_BALANCE,
+            pay_methods=[
+                {"value": 51, "btn_clickable": True},
+                {"value": PAY_METHOD_WECHAT, "btn_clickable": True},
+            ],
+        ),
+        FakeResponse({"code": "OK", "data": {"id": "balance-order"}}),
+    )
+    buyer = BuffBuyer(
+        "session=s; csrf_token=c",
+        pay_method=PAY_METHOD_BALANCE,
+        steam_id=STEAM_ID,
+        session=session,
+        request_policy=no_wait_policy(),
+    )
+
+    assert buyer._execute_post_buy("csgo", 1, "sell-order", "10.00") == "SUCCESS"
+    assert [(method, url) for method, url, _ in session.calls] == [
+        ("GET", API_BUY_PREVIEW),
+        ("POST", API_BUY),
+    ]
+    payload = json.loads(session.calls[1][2]["data"])
+    assert payload["pay_method"] == PAY_METHOD_BALANCE
+
+
+def test_balance_checkout_allows_preview_without_balance_method():
+    session = FakeSession(
+        *checkout_responses(
+            FakeResponse({"code": "OK", "data": {"id": "balance-order"}}),
+            pay_method=PAY_METHOD_BALANCE,
+            pay_methods=[
+                {"value": 51, "btn_clickable": True},
+                {"value": PAY_METHOD_WECHAT, "btn_clickable": True},
+            ],
+        )
+    )
+    buyer = BuffBuyer(
+        "session=s; csrf_token=c",
+        pay_method=PAY_METHOD_BALANCE,
+        session=session,
+        request_policy=no_wait_policy(),
+    )
+
+    result = buyer.lock_and_get_pay_url("csgo", 1, "sell-order", "10.00")
+
+    assert result["success"] is True
+    assert result["pay_type"] == "balance"
+    assert [(method, url) for method, url, _ in session.calls] == [
+        ("GET", API_USER_INFO),
+        ("GET", API_BUY_PREVIEW),
+        ("POST", API_BUY),
+    ]
+    payload = json.loads(session.calls[2][2]["data"])
+    assert payload["pay_method"] == PAY_METHOD_BALANCE
+
+
+def test_balance_preview_with_insufficient_text_is_safe_to_fallback_without_post():
+    session = FakeSession(
+        user_info_response(),
+        FakeResponse(
+            {
+                "code": "OK",
+                "data": {
+                    "pay_methods": [
+                        {
+                            "value": PAY_METHOD_BALANCE,
+                            "btn_clickable": False,
+                            "error": "余额不足",
+                        }
+                    ]
+                },
+            }
+        ),
+    )
+    buyer = BuffBuyer(
+        "session=s; csrf_token=c",
+        pay_method=PAY_METHOD_BALANCE,
+        session=session,
+        request_policy=no_wait_policy(),
+    )
+
+    result = buyer.lock_and_get_pay_url("csgo", 1, "sell-order", "10.00")
+
+    assert result["success"] is False
+    assert result["code"] == "BALANCE_INSUFFICIENT"
+    assert result["safe_to_fallback"] is True
+    assert result["created"] is False
+    assert [(method, url) for method, url, _ in session.calls] == [
+        ("GET", API_USER_INFO),
+        ("GET", API_BUY_PREVIEW),
+    ]
+
+
+class StaticBuffClientMixin:
+    def _ensure_current_buyer(self):
+        return self._buyer
+
+
+def test_buff_client_balance_prepare_allows_preview_without_balance_method():
+    from app.services.buff_client import BuffClient
+
+    class StaticBuffClient(StaticBuffClientMixin, BuffClient):
+        pass
+
+    session = FakeSession(
+        buy_preview_response(
+            pay_method=PAY_METHOD_BALANCE,
+            pay_methods=[
+                {"value": 51, "btn_clickable": True},
+                {"value": PAY_METHOD_WECHAT, "btn_clickable": True},
+            ],
+        ),
+    )
+    client = StaticBuffClient("session=s; csrf_token=c", pay_method="balance")
+    client._buyer.close()
+    client._buyer = BuffBuyer(
+        "session=s; csrf_token=c",
+        pay_method=PAY_METHOD_BALANCE,
+        steam_id=STEAM_ID,
+        session=session,
+        request_policy=no_wait_policy(),
+    )
+    client._cookies = "session=s; csrf_token=c"
+    client._user_agent = client._buyer.user_agent
+    try:
+        result = client.prepare_single_buy("csgo", 1, "sell-order", "10.00")
+    finally:
+        client.close()
+
+    assert result["success"] is True
+    assert result["created"] is False
+    assert result["preview"]["code"] == "OK"
+    assert [(method, url) for method, url, _ in session.calls] == [
+        ("GET", API_BUY_PREVIEW),
+    ]
+
+
+def test_buff_client_balance_prepare_marks_insufficient_safe_to_fallback():
+    from app.services.buff_client import BuffClient
+
+    class StaticBuffClient(StaticBuffClientMixin, BuffClient):
+        pass
+
+    session = FakeSession(
+        FakeResponse(
+            {
+                "code": "OK",
+                "data": {
+                    "pay_methods": [
+                        {
+                            "value": PAY_METHOD_BALANCE,
+                            "btn_clickable": False,
+                            "btn_text": "钱包余额不足",
+                        }
+                    ]
+                },
+            }
+        ),
+    )
+    client = StaticBuffClient("session=s; csrf_token=c", pay_method="balance")
+    client._buyer.close()
+    client._buyer = BuffBuyer(
+        "session=s; csrf_token=c",
+        pay_method=PAY_METHOD_BALANCE,
+        steam_id=STEAM_ID,
+        session=session,
+        request_policy=no_wait_policy(),
+    )
+    client._cookies = "session=s; csrf_token=c"
+    client._user_agent = client._buyer.user_agent
+    try:
+        result = client.prepare_single_buy("csgo", 1, "sell-order", "10.00")
+    finally:
+        client.close()
+
+    assert result["success"] is False
+    assert result["code"] == "BALANCE_INSUFFICIENT"
+    assert result["safe_to_fallback"] is True
+    assert result["created"] is False
+    assert [(method, url) for method, url, _ in session.calls] == [
+        ("GET", API_BUY_PREVIEW),
+    ]
 
 
 def test_login_redirect_is_auth_expired_and_verification_redirect_is_fused():
