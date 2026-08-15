@@ -294,7 +294,7 @@ class BuffClient:
     ) -> Dict[str, Any]:
         selected_method = self._normalize_pay_method(pay_method or self._pay_method)
         selected_method_id = PAY_METHOD_NAMES[selected_method]
-        return self._run(
+        result = self._run(
             lambda buyer: buyer.lock_and_get_pay_url(
                 game,
                 goods_id,
@@ -305,6 +305,52 @@ class BuffClient:
                 pay_method=selected_method_id,
             )
         )
+
+        # Keep the fallback safe even for callers that do not run the separate
+        # prepare_single_buy step (for example legacy/compatibility callers),
+        # and for a balance preview that becomes insufficient just before the
+        # lock request. No order has been created in this branch, so retrying
+        # with the configured external method cannot duplicate a checkout.
+        if (
+            self._pay_method == "balance"
+            and selected_method == "balance"
+            and isinstance(result, dict)
+            and result.get("success") is not True
+            and result.get("created") is False
+            and (
+                result.get("code") == "BALANCE_INSUFFICIENT"
+                or result.get("safe_to_fallback") is True
+            )
+        ):
+            fallback = self.balance_fallback_preview(
+                result,
+                game,
+                goods_id,
+                sell_order_id,
+                price,
+            )
+            if isinstance(fallback, dict) and fallback.get("success"):
+                logger.info(
+                    "BUFF 余额支付不可用，切换到 %s 支付后重试锁单",
+                    fallback.get("pay_method") or self._balance_fallback_pay_method,
+                )
+                return self.lock_and_get_pay_url(
+                    game,
+                    goods_id,
+                    sell_order_id,
+                    price,
+                    on_created=on_created,
+                    preview=fallback.get("preview"),
+                    pay_method=fallback.get("pay_method"),
+                )
+            if isinstance(fallback, dict):
+                logger.warning(
+                    "BUFF 余额支付不可用，备用支付预检仍未通过: %s",
+                    fallback.get("msg") or fallback.get("code") or "未知原因",
+                )
+                result = dict(result)
+                result["fallback_preview"] = fallback
+        return result
 
     def balance_fallback_pay_method(self) -> str:
         return self._balance_fallback_pay_method
@@ -323,7 +369,12 @@ class BuffClient:
             return None
         if preview_result.get("success"):
             return None
-        if preview_result.get("code") != "BALANCE_INSUFFICIENT":
+        if preview_result.get("created") is not False:
+            return None
+        if (
+            preview_result.get("code") != "BALANCE_INSUFFICIENT"
+            and preview_result.get("safe_to_fallback") is not True
+        ):
             return None
         fallback_method = self._balance_fallback_pay_method
         fallback_id = PAY_METHOD_NAMES[fallback_method]
@@ -399,12 +450,12 @@ class BuffClient:
             if error:
                 code = "PAY_METHOD_UNAVAILABLE"
                 safe_to_fallback = False
-                if (
-                    self._pay_method == "balance"
-                    and buyer.is_balance_insufficient_text(error)
-                ):
-                    code = "BALANCE_INSUFFICIENT"
+                if self._pay_method == "balance":
                     safe_to_fallback = True
+                    if buyer.is_balance_insufficient_text(error):
+                        code = "BALANCE_INSUFFICIENT"
+                    else:
+                        code = "BALANCE_UNAVAILABLE"
                 return {
                     "success": False,
                     "created": False,

@@ -1901,9 +1901,12 @@ def lock_and_confirm_payment(
                         )
                         if (
                             callable(fallback_prepare)
-                            and preparation_info.get("code")
-                            == "BALANCE_INSUFFICIENT"
                             and preparation_info.get("created") is False
+                            and (
+                                preparation_info.get("code")
+                                == "BALANCE_INSUFFICIENT"
+                                or preparation_info.get("safe_to_fallback") is True
+                            )
                         ):
                             fallback_preparation = fallback_prepare(
                                 preparation_info,
@@ -1917,8 +1920,14 @@ def lock_and_confirm_payment(
                                 and fallback_preparation.get("success")
                             ):
                                 if log_fn:
+                                    fallback_reason = (
+                                        "余额不足"
+                                        if preparation_info.get("code")
+                                        == "BALANCE_INSUFFICIENT"
+                                        else "余额支付不可用"
+                                    )
                                     log_fn(
-                                        "[Buff]   → BUFF 余额不足，切换到"
+                                        f"[Buff]   → BUFF {fallback_reason}，切换到"
                                         f"{fallback_preparation.get('pay_method') or '备用'}支付",
                                         "info",
                                     )

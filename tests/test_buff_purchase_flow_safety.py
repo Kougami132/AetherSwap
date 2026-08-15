@@ -1472,6 +1472,62 @@ def test_balance_insufficient_preview_uses_configured_fallback(monkeypatch):
     assert len(purchases) == 1
 
 
+def test_balance_unavailable_preview_uses_configured_fallback(monkeypatch):
+    class BuffClient:
+        _pay_method = "balance"
+
+        def __init__(self):
+            self.lock_pay_methods = []
+
+        def prepare_single_buy(self, *_args):
+            return {
+                "success": False,
+                "created": False,
+                "code": "BALANCE_UNAVAILABLE",
+                "msg": "该商品不支持余额支付",
+                "safe_to_fallback": True,
+            }
+
+        def balance_fallback_preview(self, *_args):
+            return {
+                "success": True,
+                "created": False,
+                "preview": {"code": "OK", "data": {}},
+                "pay_method": "wechat",
+            }
+
+        def lock_and_get_pay_url(self, *_args, pay_method=None, **_kwargs):
+            self.lock_pay_methods.append(pay_method)
+            return {
+                "success": True,
+                "order_id": "bill-fallback",
+                "pay_url": "https://pay.invalid/fallback",
+                "pay_type": pay_method,
+            }
+
+        def ask_seller_to_send(self, *_args):
+            return True
+
+    client = BuffClient()
+    kwargs, _pending, purchases = _checkout_args(wait_result=True)
+    monkeypatch.setattr(
+        steps,
+        "_fetch_smart_market_price",
+        lambda *_args, **_kwargs: None,
+    )
+
+    paid = steps.lock_and_confirm_payment(
+        client,
+        _item([{"id": "sell-1", "price": "10.0"}]),
+        _config("balance"),
+        **kwargs,
+    )
+
+    assert paid == 10.0
+    assert client.lock_pay_methods == ["wechat"]
+    assert len(purchases) == 1
+
+
 def test_automatic_shipping_prompt_is_enabled_by_default(monkeypatch):
     class BuffClient:
         _pay_method = "alipay"

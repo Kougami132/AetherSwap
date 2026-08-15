@@ -227,6 +227,27 @@ def _is_balance_insufficient_text(value) -> bool:
             "insufficient funds",
         )
     )
+
+
+def _is_payment_method_unavailable_text(value) -> bool:
+    """Return whether BUFF explicitly rejected the selected payment method."""
+    text = str(value or "").strip().casefold()
+    if not text:
+        return False
+    return any(
+        marker in text
+        for marker in (
+            "不支持此支付方式",
+            "不支持当前支付方式",
+            "不支持余额支付",
+            "余额支付不可用",
+            "支付方式不可用",
+            "当前支付方式不可用",
+            "payment method not supported",
+            "unsupported payment method",
+            "payment method unavailable",
+        )
+    )
 API_HISTORY = "https://buff.163.com/api/market/buy_order/history"
 API_USER_INFO = "https://buff.163.com/account/api/user/info/v2"
 API_SELL_ORDER = "https://buff.163.com/api/market/goods/sell_order"
@@ -1563,12 +1584,12 @@ class BuffBuyer:
         if preview_error:
             code = "PAY_METHOD_UNAVAILABLE"
             safe_to_fallback = False
-            if (
-                effective_pay_method == PAY_METHOD_BALANCE
-                and _is_balance_insufficient_text(preview_error)
-            ):
-                code = "BALANCE_INSUFFICIENT"
+            if effective_pay_method == PAY_METHOD_BALANCE:
                 safe_to_fallback = True
+                if _is_balance_insufficient_text(preview_error):
+                    code = "BALANCE_INSUFFICIENT"
+                else:
+                    code = "BALANCE_UNAVAILABLE"
             return {
                 "success": False,
                 "code": code,
@@ -1602,17 +1623,23 @@ class BuffBuyer:
                 msg_str = str(err_msg)
                 if "Cooling Down" in msg_str:
                     return {"success": False, "code": "COOLING_DOWN"}
-                if (
-                    effective_pay_method == PAY_METHOD_BALANCE
-                    and _is_balance_insufficient_text(msg_str)
-                ):
-                    return {
-                        "success": False,
-                        "code": "BALANCE_INSUFFICIENT",
-                        "msg": err_msg,
-                        "created": False,
-                        "safe_to_fallback": True,
-                    }
+                if effective_pay_method == PAY_METHOD_BALANCE:
+                    if _is_balance_insufficient_text(msg_str):
+                        return {
+                            "success": False,
+                            "code": "BALANCE_INSUFFICIENT",
+                            "msg": err_msg,
+                            "created": False,
+                            "safe_to_fallback": True,
+                        }
+                    if _is_payment_method_unavailable_text(msg_str):
+                        return {
+                            "success": False,
+                            "code": "BALANCE_UNAVAILABLE",
+                            "msg": err_msg,
+                            "created": False,
+                            "safe_to_fallback": True,
+                        }
                 return {"success": False, "code": "FAIL", "msg": err_msg, "created": False}
             data = res.get("data")
             if not isinstance(data, dict):

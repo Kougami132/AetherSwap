@@ -1339,6 +1339,191 @@ def test_balance_split_pay_failure_returns_created_pending():
     ]
 
 
+def test_balance_lock_rejection_for_unsupported_item_is_safe_to_fallback():
+    session = FakeSession(
+        user_info_response(),
+        buy_preview_response(
+            pay_method=PAY_METHOD_BALANCE,
+            pay_methods=[
+                {"value": PAY_METHOD_BALANCE, "btn_clickable": True},
+            ],
+        ),
+        FakeResponse(
+            {
+                "code": "FAIL",
+                "msg": "该饰品暂不支持此支付方式",
+            }
+        ),
+    )
+    buyer = BuffBuyer(
+        "session=s; csrf_token=c",
+        pay_method=PAY_METHOD_BALANCE,
+        session=session,
+        request_policy=no_wait_policy(),
+    )
+
+    result = buyer.lock_and_get_pay_url("csgo", 1, "sell-order", "10.00")
+
+    assert result["success"] is False
+    assert result["code"] == "BALANCE_UNAVAILABLE"
+    assert result["safe_to_fallback"] is True
+    assert result["created"] is False
+    assert result["msg"] == "该饰品暂不支持此支付方式"
+    assert [(method, url) for method, url, _ in session.calls] == [
+        ("GET", API_USER_INFO),
+        ("GET", API_BUY_PREVIEW),
+        ("POST", API_BUY),
+    ]
+
+
+def test_buff_client_lock_falls_back_when_balance_preview_rejects():
+    from app.services.buff_client import BuffClient
+
+    class StaticBuffClientMixin:
+        def _ensure_current_buyer(self):
+            return self._buyer
+
+    class StaticBuffClient(StaticBuffClientMixin, BuffClient):
+        pass
+
+    session = FakeSession(
+        FakeResponse(
+            {
+                "code": "OK",
+                "data": {
+                    "pay_methods": [
+                        {
+                            "value": PAY_METHOD_BALANCE,
+                            "btn_clickable": False,
+                            "error": "余额不足",
+                        }
+                    ]
+                },
+            }
+        ),
+        buy_preview_response(
+            pay_method=51,
+            pay_methods=[{"value": 51, "btn_clickable": True}],
+        ),
+        FakeResponse({"code": "OK", "data": {"id": "fallback-order"}}),
+        FakeResponse(
+            {
+                "code": "OK",
+                "data": {
+                    "elements_v2": {
+                        "alipay": {"url": "https://pay.invalid/alipay"}
+                    }
+                },
+            }
+        ),
+    )
+    client = StaticBuffClient(
+        "session=s; csrf_token=c",
+        pay_method="balance",
+        balance_fallback_pay_method="alipay",
+    )
+    client._buyer.close()
+    client._buyer = BuffBuyer(
+        "session=s; csrf_token=c",
+        pay_method=PAY_METHOD_BALANCE,
+        steam_id=STEAM_ID,
+        session=session,
+        request_policy=no_wait_policy(),
+    )
+    client._cookies = "session=s; csrf_token=c"
+    client._user_agent = client._buyer.user_agent
+    try:
+        result = client.lock_and_get_pay_url(
+            "csgo", 1, "sell-order", "10.00"
+        )
+    finally:
+        client.close()
+
+    assert result["success"] is True
+    assert result["pay_type"] == "alipay"
+    assert result["pay_url"] == "https://pay.invalid/alipay"
+    assert [(method, url) for method, url, _ in session.calls] == [
+        ("GET", API_BUY_PREVIEW),
+        ("GET", API_BUY_PREVIEW),
+        ("POST", API_BUY),
+        ("GET", API_PAGE_PAY),
+    ]
+    payload = json.loads(session.calls[2][2]["data"])
+    assert payload["pay_method"] == 51
+
+
+def test_buff_client_lock_falls_back_when_balance_post_rejects_payment_method():
+    from app.services.buff_client import BuffClient
+
+    class StaticBuffClientMixin:
+        def _ensure_current_buyer(self):
+            return self._buyer
+
+    class StaticBuffClient(StaticBuffClientMixin, BuffClient):
+        pass
+
+    session = FakeSession(
+        FakeResponse(
+            {
+                "code": "OK",
+                "data": {
+                    "pay_methods": [
+                        {"value": PAY_METHOD_BALANCE, "btn_clickable": True},
+                    ]
+                },
+            }
+        ),
+        FakeResponse({"code": "FAIL", "msg": "该饰品暂不支持此支付方式"}),
+        buy_preview_response(
+            pay_method=PAY_METHOD_WECHAT,
+            pay_methods=[{"value": PAY_METHOD_WECHAT, "btn_clickable": True}],
+        ),
+        FakeResponse({"code": "OK", "data": {"id": "fallback-order"}}),
+        FakeResponse(
+            {
+                "code": "OK",
+                "data": {"url": "https://pay.invalid/wechat"},
+            }
+        ),
+    )
+    client = StaticBuffClient(
+        "session=s; csrf_token=c",
+        pay_method="balance",
+        balance_fallback_pay_method="wechat",
+    )
+    client._buyer.close()
+    client._buyer = BuffBuyer(
+        "session=s; csrf_token=c",
+        pay_method=PAY_METHOD_BALANCE,
+        steam_id=STEAM_ID,
+        session=session,
+        request_policy=no_wait_policy(),
+    )
+    client._cookies = "session=s; csrf_token=c"
+    client._user_agent = client._buyer.user_agent
+    try:
+        result = client.lock_and_get_pay_url(
+            "csgo", 1, "sell-order", "10.00"
+        )
+    finally:
+        client.close()
+
+    assert result["success"] is True
+    assert result["pay_type"] == "wechat"
+    assert result["pay_url"] == "https://pay.invalid/wechat"
+    assert [(method, url) for method, url, _ in session.calls] == [
+        ("GET", API_BUY_PREVIEW),
+        ("POST", API_BUY),
+        ("GET", API_BUY_PREVIEW),
+        ("POST", API_BUY),
+        ("GET", API_WX_PAY_QRCODE),
+    ]
+    first_payload = json.loads(session.calls[1][2]["data"])
+    fallback_payload = json.loads(session.calls[3][2]["data"])
+    assert first_payload["pay_method"] == PAY_METHOD_BALANCE
+    assert fallback_payload["pay_method"] == PAY_METHOD_WECHAT
+
+
 def test_balance_preview_with_insufficient_text_is_safe_to_fallback_without_post():
     session = FakeSession(
         user_info_response(),
@@ -1462,6 +1647,55 @@ def test_buff_client_balance_prepare_marks_insufficient_safe_to_fallback():
     assert result["code"] == "BALANCE_INSUFFICIENT"
     assert result["safe_to_fallback"] is True
     assert result["created"] is False
+    assert [(method, url) for method, url, _ in session.calls] == [
+        ("GET", API_BUY_PREVIEW),
+    ]
+
+
+def test_buff_client_balance_prepare_marks_unavailable_safe_to_fallback():
+    from app.services.buff_client import BuffClient
+
+    class StaticBuffClient(StaticBuffClientMixin, BuffClient):
+        pass
+
+    session = FakeSession(
+        FakeResponse(
+            {
+                "code": "OK",
+                "data": {
+                    "pay_methods": [
+                        {
+                            "value": PAY_METHOD_BALANCE,
+                            "btn_clickable": False,
+                            "btn_text": "该商品不支持余额支付",
+                        },
+                        {"value": PAY_METHOD_WECHAT, "btn_clickable": True},
+                    ]
+                },
+            }
+        ),
+    )
+    client = StaticBuffClient("session=s; csrf_token=c", pay_method="balance")
+    client._buyer.close()
+    client._buyer = BuffBuyer(
+        "session=s; csrf_token=c",
+        pay_method=PAY_METHOD_BALANCE,
+        steam_id=STEAM_ID,
+        session=session,
+        request_policy=no_wait_policy(),
+    )
+    client._cookies = "session=s; csrf_token=c"
+    client._user_agent = client._buyer.user_agent
+    try:
+        result = client.prepare_single_buy("csgo", 1, "sell-order", "10.00")
+    finally:
+        client.close()
+
+    assert result["success"] is False
+    assert result["code"] == "BALANCE_UNAVAILABLE"
+    assert result["safe_to_fallback"] is True
+    assert result["created"] is False
+    assert result["msg"] == "该商品不支持余额支付"
     assert [(method, url) for method, url, _ in session.calls] == [
         ("GET", API_BUY_PREVIEW),
     ]
