@@ -99,3 +99,36 @@ def test_listing_plan_never_prices_or_lists_same_name_personal_item():
         )
 
     assert result == []
+
+
+def test_listing_plan_sells_non_purchased_item_when_sell_only_purchased_disabled():
+    ctx = _ctx()
+    historical = _purchase(
+        assetid="asset-already-sold",
+        sale_price=120.0,
+        sold_at=1_700_000_000.0,
+    )
+
+    orders = {"sell_orders": [{"price": 10000, "quantity": 10}]}
+    with patch("app.sell_pipeline.get_sell_orders_cny", return_value=orders), \
+         patch("app.sell_pipeline.compute_smart_list_price", return_value=(100.0, "wall")):
+        result = _build_listing_plan(
+            ctx=ctx,
+            cfg={"pipeline": {"sell_only_purchased": False}},
+            session=MagicMock(),
+            sellable=[_inventory_item("personal-drop")],
+            sell_strategy=1,
+            pipeline_cfg={"sell_only_purchased": False},
+            purchases_snapshot=[historical],
+            ok_listings=True,
+            active_listing_ids=set(),
+            listing_assetid_to_name={},
+            assetid_to_name_map={},
+            account_currency="CNY",
+            rate_map={},
+        )
+
+    assert len(result) == 1
+    assert result[0]["aid"] == "personal-drop"
+    assert result[0]["list_price"] == 100.0
+    assert result[0]["price_cents"] == 8697

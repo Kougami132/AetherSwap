@@ -25,6 +25,7 @@ def _config(pay_method="alipay"):
             "game": "csgo",
             "pay_method": pay_method,
             "price_tolerance": 0.5,
+            "balance_require_manual_offer_confirm": False,
         },
         "pipeline": {"buff_sell_orders_cache_ttl_seconds": 3},
         "_strategy_runtime": {"buy": {"enabled_modules": []}},

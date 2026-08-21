@@ -24,7 +24,12 @@ class SteamConfirmer:
         raw_secret = raw_secret.replace("\u002B", "+").replace("\u002b", "+")
         raw_secret = raw_secret.replace("\\/", "/")
         self.identity_secret = raw_secret
-        self.device_id = urllib.parse.unquote((device_id or "").strip())
+        raw_dev = urllib.parse.unquote((device_id or "").strip())
+        if (not raw_dev.startswith("android:") or len(raw_dev) > 64) and steam_id:
+            import steampy.guard
+            self.device_id = steampy.guard.generate_device_id(str(steam_id))
+        else:
+            self.device_id = raw_dev
         self.steam_id = str(steam_id or "").strip()
         self.session = requests.Session()
         self.session.verify = False

@@ -48,6 +48,7 @@ DEFAULTS = {
         "sell_price_ratio": 1.0,
         "verbose_debug": False,
         "sell_strategy": 4,
+        "sell_only_purchased": True,
         "sell_price_offset": 0,
         "sell_price_wall_volume": 20,
         "sell_price_max_ignore_volume": 4,
@@ -156,6 +157,7 @@ def _validate_ranges(cfg: dict) -> dict:
     # 简单校验一下，防止用户乱填配置搞崩程序
     import warnings
     pipe = cfg.get("pipeline") or {}
+    pipe["sell_only_purchased"] = _coerce_bool(pipe.get("sell_only_purchased"), True)
     stab = cfg.get("stability") or {}
     buff = cfg.get("buff") or {}
     inv = cfg.get("inventory") or {}

@@ -176,6 +176,7 @@ def _build_listing_plan(
     max_per_item = max(1, int(pipeline_cfg.get("max_listings_per_item", 5) or 5))
     sell_offset = float(pipeline_cfg.get("sell_price_offset", 0))
     trend_days = int(pipeline_cfg.get("sell_trend_days", 7))
+    sell_only_purchased = bool(pipeline_cfg.get("sell_only_purchased", True))
 
     to_list_by_name: dict = defaultdict(int)
     skip_same_name_cap: dict = defaultdict(int)
@@ -199,7 +200,7 @@ def _build_listing_plan(
             continue
         
         buy_record = _find_buy_record(purchases_snapshot, aid, market_hash_name)
-        if not buy_record:
+        if sell_only_purchased and not buy_record:
             ctx.log(f"[出售] {name} assetid={aid} 不在本地购买记录中（非倒余额库>存），为保护个人物品跳过出售", "info", category="steam")
             continue
 

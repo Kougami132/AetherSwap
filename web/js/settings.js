@@ -99,6 +99,8 @@ async function loadConfig() {
   const verboseCb = el("cfg-verbose-debug");
   if (verboseCb) verboseCb.checked = !!p.verbose_debug;
   const steamListingsDebugCb = el("cfg-steam-listings-debug");
+  const sellOnlyPurchasedCb = el("cfg-sell_only_purchased");
+  if (sellOnlyPurchasedCb) sellOnlyPurchasedCb.checked = p.sell_only_purchased !== false;
   if (steamListingsDebugCb) steamListingsDebugCb.checked = !!p.steam_listings_debug;
   const sellStrategy = el("cfg-sell_strategy");
   if (sellStrategy) sellStrategy.value = String(p.sell_strategy ?? 1);
@@ -256,6 +258,7 @@ function formToConfig() {
       ) : undefined,
       verbose_debug: el("cfg-verbose-debug") ? el("cfg-verbose-debug").checked : false,
       steam_listings_debug: el("cfg-steam-listings-debug") ? el("cfg-steam-listings-debug").checked : false,
+      sell_only_purchased: el("cfg-sell_only_purchased") ? el("cfg-sell_only_purchased").checked : undefined,
       sell_strategy: el("cfg-sell_strategy") ? parseInt(el("cfg-sell_strategy").value, 10) || 1 : undefined,
       sell_price_offset: el("cfg-sell_price_offset") ? parseFloat(el("cfg-sell_price_offset").value) || 0 : undefined,
       sell_price_wall_volume: el("cfg-sell_price_wall_volume") ? parseInt(el("cfg-sell_price_wall_volume").value, 10) : undefined,
