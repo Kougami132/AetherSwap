@@ -76,6 +76,8 @@ def update_account(account_id: str, **kwargs: Any) -> Optional[dict]:
         "region_checked_at",
         "currency_checked_at",
         "wallet_currency_id",
+        "cookies",
+        "session_id",
     )
     for a in accs:
         if a.get("id") == account_id:
@@ -101,6 +103,13 @@ def set_current(account_id: str) -> bool:
         return False
     data["current_id"] = account_id
     _save(data)
+    acc = get_account(account_id)
+    if acc and acc.get("cookies"):
+        try:
+            from app.config_loader import update_steam_creds
+            update_steam_creds(acc.get("cookies") or "", acc.get("session_id") or "", acc.get("steam_id") or None)
+        except Exception:
+            pass
     return True
 def replace_all(data: dict) -> None:
     payload = {

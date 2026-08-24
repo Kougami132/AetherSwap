@@ -340,7 +340,13 @@ def listing_check_worker() -> None:
             if not is_steam_background_allowed():
                 continue
             purchases = get_purchases()
-            listing_idx = [(i, p) for i, p in enumerate(purchases) if p.get("listing") and p.get("assetid")]
+            cur_acc = get_current_account() or {}
+            cur_acc_id = cur_acc.get("id")
+            # Only check listings belonging to the currently active account (or unassigned items)
+            listing_idx = [
+                (i, p) for i, p in enumerate(purchases)
+                if p.get("listing") and p.get("assetid") and (not cur_acc_id or not p.get("account_id") or p.get("account_id") == cur_acc_id)
+            ]
             if not listing_idx:
                 continue
             cred = get_steam_credentials()

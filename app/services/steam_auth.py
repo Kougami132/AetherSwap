@@ -625,7 +625,9 @@ def _try_steam_auto_relogin_impl() -> tuple:
             update_account(account_id,
                            steam_id=steam_id or cur.get("steam_id", ""),
                            display_name=dn or cur.get("display_name", ""),
-                           avatar_url=av or cur.get("avatar_url", ""))
+                           avatar_url=av or cur.get("avatar_url", ""),
+                           cookies=cookie_str,
+                           session_id=session_id or "")
         except Exception:
             pass
         log("auto_relogin: 登录成功", "info", category="steam")
@@ -682,7 +684,9 @@ def verify_steam_auto_login(account_id: str) -> dict:
                 update_account(account_id,
                                steam_id=steam_id or cur_acc.get("steam_id", ""),
                                display_name=dn or cur_acc.get("display_name", ""),
-                               avatar_url=av or cur_acc.get("avatar_url", ""))
+                               avatar_url=av or cur_acc.get("avatar_url", ""),
+                               cookies=cookie_str,
+                               session_id=session_id or "")
             except Exception:
                 pass
         return {"ok": True, "status": "auto_ok", "message": "可自动登录"}

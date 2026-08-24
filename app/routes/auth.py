@@ -314,7 +314,7 @@ def _relogin_worker(relogin_type: str) -> None:
                                     steam_id = v.split("||")[0].strip()
                                 break
                         display_name, avatar_url = fetch_steam_profile_via_api(steam_id or "", cookie_str)
-                        update_account(cur["id"], steam_id=steam_id or "", display_name=display_name, avatar_url=avatar_url)
+                        update_account(cur["id"], steam_id=steam_id or "", display_name=display_name, avatar_url=avatar_url, cookies=cookie_str, session_id=session_id)
             else:
                 verified, verify_status, verify_message = verify_buff_browser_session(page)
                 if not verified:
@@ -481,7 +481,7 @@ def api_auth_manual_cookie(relogin_type: str, body: ManualCookieBody):
         cur = get_current_account()
         if cur:
             display_name, avatar_url = fetch_steam_profile_via_api(steam_id or cur.get("steam_id", ""), cookie_str)
-            update_account(cur["id"], steam_id=steam_id or cur.get("steam_id", ""), display_name=display_name, avatar_url=avatar_url)
+            update_account(cur["id"], steam_id=steam_id or cur.get("steam_id", ""), display_name=display_name, avatar_url=avatar_url, cookies=cookie_str, session_id=session_id)
         return {"ok": True, "message": "Steam Cookie 已保存", "steam_id": steam_id}
     if relogin_type == "buff":
         if not _cookie_value(cookie_str, "session"):
