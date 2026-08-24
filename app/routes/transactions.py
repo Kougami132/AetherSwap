@@ -33,6 +33,8 @@ class AddPurchaseBody(BaseModel):
     goods_id: Optional[int] = None
     steam_link: Optional[str] = None
     assetid: Optional[str] = None
+    account_id: Optional[str] = None
+    steam_username: Optional[str] = None
 class TransactionUpdateBody(BaseModel):
     type: str = "purchase"
     idx: int = 0
@@ -50,6 +52,8 @@ class TransactionUpdateBody(BaseModel):
     pending_receipt: Optional[bool] = None
     assetid: Optional[str] = None
     listing: Optional[bool] = None
+    account_id: Optional[str] = None
+    steam_username: Optional[str] = None
 def _name_from_steam_link(steam_link: str) -> Optional[str]:
     from steam.client import resolve_market_hash_name_from_listing_url
     from utils.proxy_manager import get_proxy_manager
@@ -112,12 +116,24 @@ def api_add_purchase(body: AddPurchaseBody):
     price = round(float(body.price), 2)
     market_price = _fetch_steam_lowest_cny(name)
     assetid_val = (body.assetid or "").strip() or None
+    from app.accounts import get_current_account, get_account
+    acc = None
+    if body.account_id:
+        acc = get_account(body.account_id)
+    if not acc:
+        acc = get_current_account() or {}
+    acc_id = body.account_id or acc.get("id")
+    steam_uname = body.steam_username or acc.get("username") or acc.get("display_name")
     for _ in range(qty):
         rec = {"name": name, "goods_id": goods_id, "price": price, "at": now}
         if market_price is not None and market_price > 0:
             rec["market_price"] = round(float(market_price), 2)
         if assetid_val is not None:
             rec["assetid"] = assetid_val
+        if acc_id:
+            rec["account_id"] = acc_id
+        if steam_uname:
+            rec["steam_username"] = steam_uname
         append_purchase(rec)
     return {"ok": True, "added": qty}
 @router.get("/api/transactions")
@@ -151,6 +167,8 @@ def api_transactions(enrich_current_price: bool = False):
             "buff_sell_order_id",
             "batch_id",
             "bill_order_id",
+            "account_id",
+            "steam_username",
         ):
             if p.get(key) is not None:
                 row[key] = str(p.get(key))
@@ -216,6 +234,10 @@ def api_update_transaction(body: TransactionUpdateBody):
         data["listing"] = bool(body.listing)
         if not body.listing:
             data["listing_status"] = None
+    if body.account_id is not None:
+        data["account_id"] = body.account_id if body.account_id else None
+    if body.steam_username is not None:
+        data["steam_username"] = body.steam_username if body.steam_username else None
     ok = False
     if body.type == "purchase":
         ok = update_purchase_by_id(body.db_id, data) if body.db_id else update_purchase(body.idx, data)

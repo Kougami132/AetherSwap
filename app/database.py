@@ -41,6 +41,8 @@ class Purchase(SQLModel, table=True):
     buff_sell_order_id: Optional[str] = None
     batch_id: Optional[str] = Field(default=None, index=True)
     bill_order_id: Optional[str] = None
+    account_id: Optional[str] = Field(default=None, index=True)
+    steam_username: Optional[str] = None
 class Sale(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str = ""
@@ -130,6 +132,8 @@ def init_db() -> None:
         ("buff_sell_order_id", "TEXT"),
         ("batch_id", "TEXT"),
         ("bill_order_id", "TEXT"),
+        ("account_id", "TEXT"),
+        ("steam_username", "TEXT"),
     )
     with engine.connect() as conn:
         for column_name, column_type in purchase_columns:
@@ -184,6 +188,8 @@ def _purchase_from_dict(d: dict) -> Purchase:
         buff_sell_order_id=str(d["buff_sell_order_id"]) if d.get("buff_sell_order_id") else None,
         batch_id=str(d["batch_id"]) if d.get("batch_id") else None,
         bill_order_id=str(d["bill_order_id"]) if d.get("bill_order_id") else None,
+        account_id=str(d["account_id"]) if d.get("account_id") else None,
+        steam_username=str(d["steam_username"]) if d.get("steam_username") else None,
     )
 def _sale_from_dict(d: dict) -> Sale:
     return Sale(
@@ -223,6 +229,10 @@ def _purchase_to_dict(p: Purchase) -> dict:
         d["batch_id"] = p.batch_id
     if p.bill_order_id is not None:
         d["bill_order_id"] = p.bill_order_id
+    if p.account_id is not None:
+        d["account_id"] = p.account_id
+    if p.steam_username is not None:
+        d["steam_username"] = p.steam_username
     return d
 def _sale_to_dict(s: Sale) -> dict:
     d = {
@@ -269,6 +279,7 @@ _PURCHASE_UPDATABLE = frozenset({
     "name", "price", "goods_id", "market_price", "sale_price",
     "sold_at", "pending_receipt", "assetid", "listing", "listing_status",
     "buff_order_id", "buff_sell_order_id", "batch_id", "bill_order_id",
+    "account_id", "steam_username",
 })
 _SALE_UPDATABLE = frozenset({"name", "price", "goods_id", "assetid", "at"})
 def db_append_purchase(p: dict) -> None:

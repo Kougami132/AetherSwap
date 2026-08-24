@@ -45,10 +45,12 @@ function renderTxTable(tbody, list, isPurchase = false, resellRatio = 0.85, mult
       const profitCell = cashProfit ? `<td class="mono ${profitClass}">${escapeHtml(parseFloat(cashProfit) >= 0 ? "+" + cashProfit : cashProfit)}</td>` : "<td></td>";
       const selfUseCell = selfUseProfit ? `<td class="mono ${selfUseClass}">${escapeHtml(parseFloat(selfUseProfit) >= 0 ? "+" + selfUseProfit : selfUseProfit)}</td>` : "<td></td>";
       const assetidCell = `<td class="mono">${escapeHtml(t.assetid ?? "—")}</td>`;
-      rowHtmls.push(`<tr>${checkCell}<td class="mono">${escapeHtml(timeStr)}</td><td>${escapeHtml(nameText)}</td>${assetidCell}${priceCell}<td class="mono">${escapeHtml(mp)}</td><td class="mono">${escapeHtml(cmp)}</td>${afterTaxCell}${discountRatioCell}${profitCell}${selfUseCell}${plCell}<td class="tx-actions">${actHtml}</td></tr>`);
+      const userCell = `<td>${escapeHtml(t.steam_username || "—")}</td>`;
+      rowHtmls.push(`<tr>${checkCell}${userCell}<td class="mono">${escapeHtml(timeStr)}</td><td>${escapeHtml(nameText)}</td>${assetidCell}${priceCell}<td class="mono">${escapeHtml(mp)}</td><td class="mono">${escapeHtml(cmp)}</td>${afterTaxCell}${discountRatioCell}${profitCell}${selfUseCell}${plCell}<td class="tx-actions">${actHtml}</td></tr>`);
     } else {
       const assetidCell = `<td class="mono">${escapeHtml(t.assetid ?? "—")}</td>`;
-      rowHtmls.push(`<tr>${checkCell}<td class="mono">${escapeHtml(timeStr)}</td><td>${escapeHtml(nameText)}</td>${assetidCell}${priceCell}<td class="tx-actions">${actHtml}</td></tr>`);
+      const userCell = `<td>${escapeHtml(t.steam_username || "—")}</td>`;
+      rowHtmls.push(`<tr>${checkCell}${userCell}<td class="mono">${escapeHtml(timeStr)}</td><td>${escapeHtml(nameText)}</td>${assetidCell}${priceCell}<td class="tx-actions">${actHtml}</td></tr>`);
     }
   }
   tbody.innerHTML = rowHtmls.join("");
@@ -164,7 +166,8 @@ function renderPurchaseHistoryTable(tbody, list, resellRatio = 0.85, multiSelect
     const delistBtn = !multiSelectMode && t.listing ? `<button type="button" class="btn btn-sm btn-warning-outline ph-btn-delist" data-type="purchase" data-idx="${idx}" data-db-id="${dbId}">下架</button> ` : "";
     const actHtml = !multiSelectMode ? (delistBtn + `<button type="button" class="btn btn-sm btn-danger-outline ph-btn-del" data-type="purchase" data-idx="${idx}">删除</button>`) : "";
     const assetidStr = t.assetid ?? "—";
-    rowHtmls.push(`<tr>${checkCell}<td class="mono">${escapeHtml(timeStr)}</td><td>${escapeHtml(nameText)}</td><td class="mono">${escapeHtml(assetidStr)}</td><td class="mono">${escapeHtml(Number(t.price).toFixed(2))}</td><td class="mono">${escapeHtml(mp)}</td><td class="status-cell ${statusCellClass}">${escapeHtml(statusStr)}</td><td class="mono">${escapeHtml(salePriceStr)}</td><td class="mono ${discountRatioClass}">${escapeHtml(discountRatioStr)}</td><td class="mono ${cashClass}">${escapeHtml(cashProfitStr)}</td><td class="mono ${selfUseClass}">${escapeHtml(selfUseStr)}</td>${deviationCell}<td class="tx-actions">${actHtml}</td></tr>`);
+    const userCell = `<td>${escapeHtml(t.steam_username || "—")}</td>`;
+    rowHtmls.push(`<tr>${checkCell}${userCell}<td class="mono">${escapeHtml(timeStr)}</td><td>${escapeHtml(nameText)}</td><td class="mono">${escapeHtml(assetidStr)}</td><td class="mono">${escapeHtml(Number(t.price).toFixed(2))}</td><td class="mono">${escapeHtml(mp)}</td><td class="status-cell ${statusCellClass}">${escapeHtml(statusStr)}</td><td class="mono">${escapeHtml(salePriceStr)}</td><td class="mono ${discountRatioClass}">${escapeHtml(discountRatioStr)}</td><td class="mono ${cashClass}">${escapeHtml(cashProfitStr)}</td><td class="mono ${selfUseClass}">${escapeHtml(selfUseStr)}</td>${deviationCell}<td class="tx-actions">${actHtml}</td></tr>`);
   }
   tbody.innerHTML = rowHtmls.join("");
   tbody.querySelectorAll(".ph-btn-delist").forEach(btn => {
@@ -211,21 +214,74 @@ function renderPurchaseHistoryTable(tbody, list, resellRatio = 0.85, multiSelect
     });
   });
 }
+function getHistoryItemStatusKey(t) {
+  if (t.pending_receipt) return "pending";
+  if (t.sale_price != null && Number(t.sale_price) > 0) return "sold";
+  if (t.listing_status === "error") return "error";
+  if (t.listing) return "listing";
+  return "holding";
+}
+
+let historyFilterEventsBound = false;
+function initHistoryFilters() {
+  if (historyFilterEventsBound) return;
+  const accSel = el("filter-history-account");
+  const statusSel = el("filter-history-status");
+  const handleChange = () => {
+    if (lastEnrichData) {
+      const summaryEl = el("purchases-summary");
+      const tbodyP = document.querySelector("#transactions-table-purchases tbody");
+      const tbodyS = document.querySelector("#transactions-table-sales tbody");
+      const tbodyHistory = document.querySelector("#transactions-table-purchase-history tbody");
+      applyTransactionsToUI(lastEnrichData, summaryEl, tbodyP, tbodyS, tbodyHistory);
+    }
+  };
+  if (accSel) accSel.addEventListener("change", handleChange);
+  if (statusSel) statusSel.addEventListener("change", handleChange);
+  historyFilterEventsBound = true;
+}
+
+function updateHistoryAccountFilterOptions(purchases) {
+  const accSel = el("filter-history-account");
+  if (!accSel) return;
+  const currentVal = accSel.value || "";
+  const usernames = Array.from(new Set(purchases.map(t => t.steam_username).filter(Boolean))).sort();
+  const options = ['<option value="">全部 Steam 账号</option>'];
+  for (const u of usernames) {
+    options.push(`<option value="${escapeHtml(u)}">${escapeHtml(u)}</option>`);
+  }
+  accSel.innerHTML = options.join("");
+  if (currentVal && usernames.includes(currentVal)) {
+    accSel.value = currentVal;
+  } else {
+    accSel.value = "";
+  }
+}
+
 function applyTransactionsToUI(all, summaryEl, tbodyP, tbodyS, tbodyHistory, resellRatio = 0.85) {
+  initHistoryFilters();
   const purchases = all.filter((t) => t.type === "purchase");
   const holdings = purchases.filter((t) => !(t.sale_price != null && Number(t.sale_price) > 0));
   const sales = all.filter((t) => t.type === "sale");
   const ratio = Math.max(0.01, Math.min(1, Number(resellRatio) || 0.85));
   if (tbodyP) renderTxTable(tbodyP, holdings, true, ratio, holdingsMultiSelectMode);
-  if (tbodyHistory) renderPurchaseHistoryTable(tbodyHistory, purchases, ratio, historyMultiSelectMode);
+  const accFilter = el("filter-history-account")?.value || "";
+  const statusFilter = el("filter-history-status")?.value || "";
+  const filteredPurchases = purchases.filter((t) => {
+    if (accFilter && (t.steam_username || "") !== accFilter) return false;
+    if (statusFilter && getHistoryItemStatusKey(t) !== statusFilter) return false;
+    return true;
+  });
+
+  if (tbodyHistory) renderPurchaseHistoryTable(tbodyHistory, filteredPurchases, ratio, historyMultiSelectMode);
   syncHistoryMultiSelectUI();
   const historySummaryEl = el("purchase-history-summary");
-  if (historySummaryEl && purchases.length) {
-    const totalPrice = purchases.reduce((s, t) => s + (Number(t.price) || 0), 0);
-    const totalMp = purchases.reduce((s, t) => s + (t.market_price != null ? Number(t.market_price) : 0), 0);
-    const totalSalePrice = purchases.reduce((s, t) => s + (t.sale_price != null && Number(t.sale_price) > 0 ? Number(t.sale_price) : 0), 0);
+  if (historySummaryEl && filteredPurchases.length) {
+    const totalPrice = filteredPurchases.reduce((s, t) => s + (Number(t.price) || 0), 0);
+    const totalMp = filteredPurchases.reduce((s, t) => s + (t.market_price != null ? Number(t.market_price) : 0), 0);
+    const totalSalePrice = filteredPurchases.reduce((s, t) => s + (t.sale_price != null && Number(t.sale_price) > 0 ? Number(t.sale_price) : 0), 0);
     const totalAfterTax = totalSalePrice > 0 ? totalSalePrice / 1.15 : null;
-    const soldItems = purchases.filter((t) => t.sale_price != null && Number(t.sale_price) > 0);
+    const soldItems = filteredPurchases.filter((t) => t.sale_price != null && Number(t.sale_price) > 0);
     let ratioSum = 0, ratioCount = 0, totalCashProfit = 0, totalSelfUseProfit = 0;
     soldItems.forEach((t) => {
       const afterTax = Number(t.sale_price) / 1.15;
@@ -240,7 +296,7 @@ function applyTransactionsToUI(all, summaryEl, tbodyP, tbodyS, tbodyHistory, res
     const selfUseProfitVal = soldItems.length > 0 ? totalSelfUseProfit : null;
     const profitClass = cashProfitVal != null && cashProfitVal > 0 ? "text-ok" : cashProfitVal != null && cashProfitVal < 0 ? "text-bad" : "";
     const selfUseClass = selfUseProfitVal != null && selfUseProfitVal > 0 ? "text-ok" : selfUseProfitVal != null && selfUseProfitVal < 0 ? "text-bad" : "";
-    const soldMp = purchases.reduce((s, t) => s + (t.sale_price != null && Number(t.sale_price) > 0 && t.market_price != null ? Number(t.market_price) : 0), 0);
+    const soldMp = filteredPurchases.reduce((s, t) => s + (t.sale_price != null && Number(t.sale_price) > 0 && t.market_price != null ? Number(t.market_price) : 0), 0);
     const totalDeviation = totalSalePrice > 0 && soldMp > 0 ? totalSalePrice - soldMp : null;
     const totalDeviationPct = totalDeviation != null && soldMp > 0 ? ((totalDeviation / soldMp) * 100).toFixed(2) + "%" : "—";
     const deviationClass = totalDeviation != null && totalDeviation > 0 ? "text-ok" : totalDeviation != null && totalDeviation < 0 ? "text-bad" : "";
@@ -372,6 +428,7 @@ async function refreshTransactions() {
       if (e && e.current_market_price != null) t.current_market_price = e.current_market_price;
     }
     lastEnrichData = all;
+    updateHistoryAccountFilterOptions(all.filter((t) => t.type === "purchase"));
     applyTransactionsToUI(all, summaryEl, tbodyP, tbodyS, tbodyHistory, d.resell_ratio);
   } catch (e) {
     toast("加载操作记录失败", e.message || "");

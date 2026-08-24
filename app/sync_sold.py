@@ -1,6 +1,8 @@
 import time
 from typing import Any, Dict, List, Tuple
 def _fill_assetid_from_inventory(purchases: List[dict], inv_items: List[dict]) -> int:
+    from app.accounts import get_current_account
+    cur_acc = get_current_account() or {}
     used_assetids = {str(p.get("assetid")) for p in purchases if p.get("assetid")}
     filled = 0
     for p in purchases:
@@ -20,6 +22,10 @@ def _fill_assetid_from_inventory(purchases: List[dict], inv_items: List[dict]) -
                 p["listing"] = False
                 p["listing_status"] = None
                 p["pending_receipt"] = False
+                if not p.get("account_id") and cur_acc.get("id"):
+                    p["account_id"] = cur_acc.get("id")
+                if not p.get("steam_username") and (cur_acc.get("username") or cur_acc.get("display_name")):
+                    p["steam_username"] = cur_acc.get("username") or cur_acc.get("display_name")
                 used_assetids.add(aid)
                 filled += 1
                 break
@@ -68,6 +74,8 @@ def run_sync_sold_from_history(log_fn=None) -> Tuple[bool, Dict[str, Any]]:
         log_fn(f"解析到售出 {len(sold_map)} 条", "info")
     updated = 0
     sold_at = time.time()
+    from app.accounts import get_current_account
+    cur_acc = get_current_account() or {}
     for i, p in enumerate(purchases):
         aid = str(p.get("assetid") or "").strip()
         if not aid or aid not in sold_map:
@@ -75,7 +83,12 @@ def run_sync_sold_from_history(log_fn=None) -> Tuple[bool, Dict[str, Any]]:
         if p.get("sale_price") is not None and float(p.get("sale_price") or 0) > 0:
             continue
         sale_price = sold_map[aid]
-        purchases[i] = {**p, "sale_price": sale_price, "sold_at": sold_at, "listing": False, "listing_status": None}
+        new_p = {**p, "sale_price": sale_price, "sold_at": sold_at, "listing": False, "listing_status": None}
+        if not new_p.get("account_id") and cur_acc.get("id"):
+            new_p["account_id"] = cur_acc.get("id")
+        if not new_p.get("steam_username") and (cur_acc.get("username") or cur_acc.get("display_name")):
+            new_p["steam_username"] = cur_acc.get("username") or cur_acc.get("display_name")
+        purchases[i] = new_p
         updated += 1
     if updated or filled:
         _state.replace_transactions(purchases, sales)

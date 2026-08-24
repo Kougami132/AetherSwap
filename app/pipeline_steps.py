@@ -1184,6 +1184,8 @@ def _do_batch_wait_finalize_and_append(
             price = float(match.get("price", 0) or 0)
             subtotal += price
             bill_order_id = str(match.get("bill_order_id") or "")
+            from app.accounts import get_current_account
+            _cur_acc = get_current_account() or {}
             rec = {
                 "name": saved_name,
                 "goods_id": goods_id,
@@ -1194,6 +1196,8 @@ def _do_batch_wait_finalize_and_append(
                 "buff_order_id": bill_order_id,
                 "bill_order_id": bill_order_id,
                 "buff_sell_order_id": str(match.get("id") or ""),
+                "account_id": _cur_acc.get("id"),
+                "steam_username": _cur_acc.get("username") or _cur_acc.get("display_name"),
             }
             if market_price is not None and market_price > 0:
                 rec["market_price"] = round(float(market_price), 2)
@@ -1399,6 +1403,8 @@ def _record_single_purchase_after_payment(
         mhn = (item.get("steam_market_name") or item.get("name") or "").strip()
         market_price = _fetch_smart_market_price(mhn, config, app_id=730)
     saved_name = (item.get("steam_market_name") or item.get("name") or "").strip()
+    from app.accounts import get_current_account
+    _cur_acc = get_current_account() or {}
     base_rec = {
         "name": saved_name,
         "goods_id": goods_id,
@@ -1407,6 +1413,8 @@ def _record_single_purchase_after_payment(
         "pending_receipt": True,
         "buff_order_id": str(order_id),
         "buff_sell_order_id": str(sell_order_id),
+        "account_id": _cur_acc.get("id"),
+        "steam_username": _cur_acc.get("username") or _cur_acc.get("display_name"),
     }
     if market_price is not None and market_price > 0:
         base_rec["market_price"] = round(float(market_price), 2)
@@ -1495,6 +1503,8 @@ def _do_wait_payment_and_append(
         mhn = (item.get("steam_market_name") or item.get("name") or "").strip()
         market_price = _fetch_smart_market_price(mhn, config, app_id=730)
     saved_name = (item.get("steam_market_name") or item.get("name") or "").strip()
+    from app.accounts import get_current_account
+    _cur_acc = get_current_account() or {}
     base_rec = {
         "name": saved_name,
         "goods_id": goods_id,
@@ -1503,6 +1513,8 @@ def _do_wait_payment_and_append(
         "pending_receipt": True,
         "buff_order_id": str(order_id),
         "buff_sell_order_id": str(sell_order_id),
+        "account_id": _cur_acc.get("id"),
+        "steam_username": _cur_acc.get("username") or _cur_acc.get("display_name"),
     }
     if market_price is not None and market_price > 0:
         base_rec["market_price"] = round(float(market_price), 2)

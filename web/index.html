@@ -521,6 +521,7 @@
             <thead>
               <tr>
                 <th id="holding-select-th" class="hidden" style="width:52px;min-width:52px"></th>
+                <th>Steam 账号</th>
                 <th>时间</th>
                 <th>物品/说明</th>
                 <th>assetid</th>
@@ -543,7 +544,22 @@
       <section id="panel-purchase-history" class="panel">
         <div class="panel-toolbar panel-toolbar--purchase-history">
           <div class="panel-toolbar-row">
-            <span class="label">操作记录</span>
+            <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+              <span class="label">操作记录</span>
+              <div class="toolbar-filters" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <select id="filter-history-account" style="padding:4px 10px;font-size:13px;min-width:140px;width:auto;">
+                  <option value="">全部 Steam 账号</option>
+                </select>
+                <select id="filter-history-status" style="padding:4px 10px;font-size:13px;min-width:110px;width:auto;">
+                  <option value="">全部状态</option>
+                  <option value="pending">待收货</option>
+                  <option value="holding">持有中</option>
+                  <option value="listing">出售中</option>
+                  <option value="sold">已出售</option>
+                  <option value="error">ERROR</option>
+                </select>
+              </div>
+            </div>
             <button id="btn-history-multiselect" class="btn btn-sm btn-secondary">多选</button>
             <div id="history-batch-actions" class="hidden" style="display:none;gap:8px;align-items:center;">
               <button id="btn-history-batch-del" class="btn btn-sm btn-danger-outline">批量删除</button>
@@ -556,6 +572,7 @@
             <thead>
               <tr>
                 <th id="history-select-th" class="hidden" style="width:52px;min-width:52px"></th>
+                <th>Steam 账号</th>
                 <th>时间</th>
                 <th>物品说明</th>
                 <th>assetid</th>

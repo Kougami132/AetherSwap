@@ -62,6 +62,13 @@ def _currency_code_from_price_text(text: str) -> str:
         return "USD"
     return "CNY"
 def _parse_sold_history_page(data: dict, rate_map: dict) -> tuple:
+    assets_730 = (data.get("assets") or {}).get("730", {}).get("2", {})
+    asset_name_map = {}
+    for aid, ainfo in assets_730.items():
+        if isinstance(ainfo, dict):
+            mhn = ainfo.get("market_hash_name") or ainfo.get("market_name") or ainfo.get("name")
+            if mhn:
+                asset_name_map[str(aid)] = mhn
     row_to_assetid = {}
     for m in HOVER_PATTERN.finditer(data.get("hovers") or ""):
         row_to_assetid[m.group(1)] = str(m.group(4))
@@ -95,8 +102,10 @@ def _parse_sold_history_page(data: dict, rate_map: dict) -> tuple:
         if not any(s in status_text for s in ("Sold", "已售出", "出售")):
             continue
         name = ""
+        if assetid in asset_name_map:
+            name = asset_name_map[assetid]
         name_el = row.find("span", class_="market_listing_item_name") or row.find("a", class_="market_listing_item_name_link")
-        if name_el:
+        if not name and name_el:
             name = (name_el.get_text(strip=True) or "").strip()
         if not name:
             link = row.find("a", href=re.compile(r"listings/730/"))
@@ -238,6 +247,12 @@ def _candidate_by_assetid(name_to_candidates: dict) -> dict:
 def _apply_candidate(purchase: dict, c: dict, sold_at: float) -> None:
     existing_sold_at = purchase.get("sold_at")
     purchase["assetid"] = c["assetid"]
+    from app.accounts import get_current_account
+    cur_acc = get_current_account() or {}
+    if not purchase.get("account_id") and cur_acc.get("id"):
+        purchase["account_id"] = cur_acc.get("id")
+    if not purchase.get("steam_username") and (cur_acc.get("username") or cur_acc.get("display_name")):
+        purchase["steam_username"] = cur_acc.get("username") or cur_acc.get("display_name")
     if c["source"] == "sold":
         purchase["sale_price"] = c["sale_price"]
         purchase["sold_at"] = existing_sold_at if existing_sold_at is not None else sold_at
@@ -287,7 +302,7 @@ def _rebuild_records(purchases: list, name_to_candidates: dict, sold_at: float) 
         matched_indexes.add(i)
         matched += 1
     for i, p in enumerate(purchases):
-        if i in matched_indexes or _has_sale_price(p) or p.get("pending_receipt"):
+        if i in matched_indexes or _has_sale_price(p):
             continue
         name = _norm_name(p.get("name") or "")
         if not name:
