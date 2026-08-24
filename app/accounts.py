@@ -36,7 +36,7 @@ def get_current_account() -> Optional[dict]:
     return next((a for a in accs if a.get("id") == cid), accs[0] if accs else None)
 def get_account(account_id: str) -> Optional[dict]:
     return next((a for a in list_accounts() if a.get("id") == account_id), None)
-def add_account(username: str = "", password: str = "", steam_id: str = "", display_name: str = "", avatar_url: str = "") -> dict:
+def add_account(username: str = "", password: str = "", steam_id: str = "", display_name: str = "", avatar_url: str = "", shared_secret: str = "", identity_secret: str = "", device_id: str = "") -> dict:
     data = _load()
     accs = data.get("accounts", [])
     aid = str(uuid.uuid4())[:8]
@@ -47,6 +47,9 @@ def add_account(username: str = "", password: str = "", steam_id: str = "", disp
         "steam_id": (steam_id or "").strip(),
         "display_name": (display_name or "").strip(),
         "avatar_url": (avatar_url or "").strip(),
+        "shared_secret": (shared_secret or "").strip(),
+        "identity_secret": (identity_secret or "").strip(),
+        "device_id": (device_id or "").strip(),
     }
     accs.append(acc)
     if not data.get("current_id"):
@@ -63,6 +66,9 @@ def update_account(account_id: str, **kwargs: Any) -> Optional[dict]:
         "steam_id",
         "display_name",
         "avatar_url",
+        "shared_secret",
+        "identity_secret",
+        "device_id",
         "currency_code",
         "region_code",
         "region_check_ok",

@@ -713,6 +713,18 @@
                 <label>显示名（登录后自动获取）</label>
                 <input type="text" id="acc-display-name" placeholder="个人资料名称" readonly />
               </div>
+              <div class="field">
+                <label>令牌 shared_secret（可选，Base64）</label>
+                <input type="password" id="acc-shared-secret" placeholder="从 Steam 手机令牌提取的 shared_secret" autocomplete="new-password" />
+              </div>
+              <div class="field">
+                <label>确认 identity_secret（可选，Base64）</label>
+                <input type="password" id="acc-identity-secret" placeholder="Steam 手机确认 identity_secret" autocomplete="new-password" />
+              </div>
+              <div class="field">
+                <label>确认 device_id（可选）</label>
+                <input type="text" id="acc-device-id" placeholder="如 android:xxxx..." autocomplete="off" />
+              </div>
             </div>
             <div class="account-form-actions">
               <button type="button" class="btn btn-secondary" id="account-form-cancel">取消</button>
@@ -916,6 +928,7 @@
 
           <div class="settings-group">
             <h2>Steam 令牌</h2>
+            <span class="field-hint" style="margin-bottom: 12px; display: block;">提示：您也可以在「账号管理」中为每个账号分别配置独立的令牌密钥。此处的配置将作为全局备用默认值。</span>
             <div class="form-grid">
               <div class="field">
                 <label for="cfg-steam-shared-secret">shared_secret</label>
@@ -1139,6 +1152,10 @@
           <div class="steam-token-glow"></div>
           <div class="steam-token-card">
             <h2 class="steam-token-title">Steam 令牌</h2>
+            <div class="steam-token-account-bar" style="margin-bottom: 24px; width: 100%;">
+              <label for="steam-guard-account-select" class="visually-hidden">选择 Steam 账号</label>
+              <select id="steam-guard-account-select" class="select" style="width: 100%; font-weight: 500;"></select>
+            </div>
             <div id="steam-token-circle" class="steam-token-circle">
               <svg class="steam-token-ring" viewBox="0 0 260 260">
                 <defs>

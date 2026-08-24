@@ -511,7 +511,9 @@ function _wizardIsFirstTime(cfg, accounts, buffNoCookie) {
   const sg = cfg.steam_guard || {};
   const sc = cfg.steam_confirm || {};
   const n = cfg.notify || {};
-  const noConfig = !sg.shared_secret && !sc.identity_secret && !n.pushplus_token;
+  const hasAccountToken = (accounts || []).some(a => !!a.shared_secret && !!a.identity_secret);
+  const tokenConfigured = (sg.shared_secret && sc.identity_secret) || hasAccountToken;
+  const noConfig = !tokenConfigured && !n.pushplus_token;
   const noAccount = !accounts || accounts.length === 0;
   // 全未配置 或者 buff cookie 不存在也弹向导
   return (noConfig && noAccount) || buffNoCookie;
@@ -539,7 +541,8 @@ async function checkAndShowOnboardingWizard() {
   const sg = cfg.steam_guard || {};
   const sc = cfg.steam_confirm || {};
   const n = cfg.notify || {};
-  const configDone = sg.shared_secret && sc.identity_secret;
+  const hasAccountToken = accounts.some(a => !!a.shared_secret && !!a.identity_secret);
+  const configDone = (sg.shared_secret && sc.identity_secret) || hasAccountToken;
   const accountDone = accounts.length > 0;
   const onlyBuffMissing = buffNoCookie && configDone && accountDone;
   _showWizard(onlyBuffMissing);
@@ -819,7 +822,9 @@ function updateNavBadges(cfg, accounts) {
   const sg = cfg.steam_guard || {};
   const sc = cfg.steam_confirm || {};
   const n = cfg.notify || {};
-  const configOk = sg.shared_secret && sc.identity_secret && n.pushplus_token;
+  const hasAccountToken = (accounts || []).some(a => !!a.shared_secret && !!a.identity_secret);
+  const tokenOk = (sg.shared_secret && sc.identity_secret) || hasAccountToken;
+  const configOk = tokenOk && n.pushplus_token;
   const accountOk = accounts.length > 0;
 
   const badgeSettings = el("nav-badge-settings");
@@ -843,10 +848,13 @@ function renderGettingStartedCard(cfg, accounts) {
   const sc = cfg.steam_confirm || {};
   const n = cfg.notify || {};
 
+  const hasAccountToken = (accounts || []).some(a => !!a.shared_secret && !!a.identity_secret);
+  const tokenDone = (!!sg.shared_secret && !!sc.identity_secret) || hasAccountToken;
+
   const steps = [
     {
-      done: !!sg.shared_secret && !!sc.identity_secret,
-      label: "填写 Steam 令牌密钥（<span class='gs-link' onclick='document.querySelector(\"[data-tab=settings]\").click()'>系统设置 → Steam 令牌</span>）",
+      done: tokenDone,
+      label: "填写 Steam 令牌密钥（<span class='gs-link' onclick='document.querySelector(\"[data-tab=accounts]\").click()'>账号管理</span> 或 <span class='gs-link' onclick='document.querySelector(\"[data-tab=settings]\").click()'>系统设置 → Steam 令牌</span>）",
     },
     {
       done: !!n.pushplus_token,
@@ -857,7 +865,7 @@ function renderGettingStartedCard(cfg, accounts) {
       label: "添加 Steam 账号并登录（<span class='gs-link' onclick='document.querySelector(\"[data-tab=accounts]\").click()'>账号管理</span>）",
     },
     {
-      done: accounts.length > 0 && !!sg.shared_secret && !!sc.identity_secret && !!n.pushplus_token,
+      done: accounts.length > 0 && tokenDone && !!n.pushplus_token,
       label: "返回仪表盘点击「启动任务」🚀",
     },
   ];

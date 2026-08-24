@@ -21,12 +21,18 @@ class AccountBody(BaseModel):
     steam_id: str = ""
     display_name: str = ""
     avatar_url: str = ""
+    shared_secret: str = ""
+    identity_secret: str = ""
+    device_id: str = ""
 class AccountUpdateBody(BaseModel):
     username: Optional[str] = None
     password: Optional[str] = None
     steam_id: Optional[str] = None
     display_name: Optional[str] = None
     avatar_url: Optional[str] = None
+    shared_secret: Optional[str] = None
+    identity_secret: Optional[str] = None
+    device_id: Optional[str] = None
 @router.get("/api/accounts")
 def api_list_accounts():
     accs = list_accounts()
@@ -41,6 +47,9 @@ def api_add_account(body: AccountBody):
         steam_id=body.steam_id,
         display_name=body.display_name,
         avatar_url=body.avatar_url,
+        shared_secret=body.shared_secret,
+        identity_secret=body.identity_secret,
+        device_id=body.device_id,
     )
     return {"ok": True, "account": acc}
 @router.put("/api/accounts/{account_id}")
@@ -56,6 +65,12 @@ def api_update_account(account_id: str, body: AccountUpdateBody):
         kwargs["display_name"] = body.display_name
     if body.avatar_url is not None:
         kwargs["avatar_url"] = body.avatar_url
+    if body.shared_secret is not None:
+        kwargs["shared_secret"] = body.shared_secret
+    if body.identity_secret is not None:
+        kwargs["identity_secret"] = body.identity_secret
+    if body.device_id is not None:
+        kwargs["device_id"] = body.device_id
     acc = update_account(account_id, **kwargs) if kwargs else get_account(account_id)
     if not acc:
         return {"ok": False, "error": "账号不存在"}

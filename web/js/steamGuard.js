@@ -1,4 +1,3 @@
-
 let steamGuardCode = '';
 let steamGuardPeriod = 30;
 let steamGuardServerOffsetMs = 0;
@@ -6,6 +5,8 @@ let steamGuardTimer = null;
 let steamGuardVisible = false;
 let steamGuardSlice = null;
 let steamGuardHideTimer = null;
+let selectedSteamGuardAccountId = '';
+
 function updateSteamGuardDisplay() {
   const textEl = el("steam-code-text");
   const subEl = el("steam-code-subtitle");
@@ -24,9 +25,57 @@ function updateSteamGuardDisplay() {
     ringEl.style.opacity = "1";
   }
 }
+
+async function renderSteamGuardAccountsDropdown() {
+  const sel = el("steam-guard-account-select");
+  if (!sel) return;
+  try {
+    let accs = accountsCache;
+    let curId = accountsCurrentId;
+    if (!accs || accs.length === 0) {
+      const d = await fetchJson(API + "/accounts");
+      accs = d.accounts || [];
+      curId = d.current_id || null;
+      accountsCache = accs;
+      accountsCurrentId = curId;
+    }
+    sel.innerHTML = "";
+    if (accs.length === 0) {
+      const opt = document.createElement("option");
+      opt.value = "";
+      opt.textContent = "默认/全局令牌";
+      sel.appendChild(opt);
+    } else {
+      accs.forEach((a) => {
+        const opt = document.createElement("option");
+        opt.value = a.id;
+        const name = a.display_name || a.username || a.steam_id || a.id;
+        const isCur = a.id === curId;
+        const hasSecret = !!a.shared_secret;
+        opt.textContent = `${name}${isCur ? " (当前)" : ""}${hasSecret ? "" : " [未配专属密钥]"}`;
+        sel.appendChild(opt);
+      });
+    }
+
+    if (!selectedSteamGuardAccountId) {
+      if (curId && accs.some((a) => a.id === curId)) {
+        selectedSteamGuardAccountId = curId;
+      } else if (accs.length > 0) {
+        selectedSteamGuardAccountId = accs[0].id;
+      }
+    }
+    if (selectedSteamGuardAccountId && Array.from(sel.options).some((o) => o.value === selectedSteamGuardAccountId)) {
+      sel.value = selectedSteamGuardAccountId;
+    }
+  } catch (e) {
+    // ignore
+  }
+}
+
 async function refreshSteamGuardCode() {
   try {
-    const d = await fetchJson(API + "/steam_guard");
+    const q = selectedSteamGuardAccountId ? `?account_id=${encodeURIComponent(selectedSteamGuardAccountId)}` : "";
+    const d = await fetchJson(API + "/steam_guard" + q);
     if (!d.ok) {
       throw new Error(d.error || "获取失败");
     }
@@ -39,9 +88,12 @@ async function refreshSteamGuardCode() {
     steamGuardSlice = Math.floor(serverTs / steamGuardPeriod);
     updateSteamGuardDisplay();
   } catch (e) {
+    steamGuardCode = "";
+    updateSteamGuardDisplay();
     toast("获取令牌失败", e.message || "");
   }
 }
+
 function startSteamGuardTimer() {
   if (steamGuardTimer) return;
   steamGuardTimer = setInterval(() => {
@@ -66,12 +118,14 @@ function startSteamGuardTimer() {
     ringEl.style.strokeDashoffset = String(circumference * (phaseMs / periodMs));
   }, 50);
 }
+
 function stopSteamGuardTimer() {
   if (steamGuardTimer) {
     clearInterval(steamGuardTimer);
     steamGuardTimer = null;
   }
 }
+
 function copySteamGuardCode() {
   const code = steamGuardCode || "";
   if (!code) return;
@@ -100,6 +154,7 @@ function copySteamGuardCode() {
     toast("已复制到剪贴板");
   }
 }
+
 function handleSteamGuardClick() {
   if (!steamGuardVisible) {
     if (steamGuardHideTimer) {
@@ -122,7 +177,25 @@ function handleSteamGuardClick() {
     copySteamGuardCode();
   }
 }
-function initSteamGuardPanel() {
+
+let steamGuardEventsBound = false;
+function bindSteamGuardEvents() {
+  if (steamGuardEventsBound) return;
+  const sel = el("steam-guard-account-select");
+  if (sel) {
+    sel.addEventListener("change", (e) => {
+      selectedSteamGuardAccountId = e.target.value;
+      steamGuardCode = "";
+      steamGuardSlice = null;
+      refreshSteamGuardCode();
+    });
+  }
+  steamGuardEventsBound = true;
+}
+
+async function initSteamGuardPanel() {
+  bindSteamGuardEvents();
+  await renderSteamGuardAccountsDropdown();
   updateSteamGuardDisplay();
   if (!steamGuardCode) {
     refreshSteamGuardCode();

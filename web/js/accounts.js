@@ -64,6 +64,9 @@ function renderAccountDetail(acc, currentId) {
         <div class="kv"><div class="k">头像</div><div class="v">${acc.avatar_url ? "已获取" : "未获取"}</div></div>
         <div class="kv"><div class="k">结算币种</div><div class="v mono">${escapeHtml(currencyLabel)}</div></div>
         <div class="kv"><div class="k">地区</div><div class="v mono">${escapeHtml(regionLabel)}</div></div>
+        <div class="kv"><div class="k">Steam 令牌密钥</div><div class="v">${acc.shared_secret ? '<span class="text-success">已配置 (shared_secret)</span>' : '<span class="text-muted">未配置</span>'}</div></div>
+        <div class="kv"><div class="k">自动确认密钥</div><div class="v">${acc.identity_secret ? '<span class="text-success">已配置 (identity_secret)</span>' : '<span class="text-muted">未配置</span>'}</div></div>
+        <div class="kv"><div class="k">确认设备 ID</div><div class="v mono">${escapeHtml(acc.device_id || "—")}</div></div>
       </div>
       <div class="callout">
         <svg class="callout-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
@@ -349,13 +352,18 @@ function openAccountForm(editId = null) {
   const pw = el("acc-password");
   const sid = el("acc-steam-id");
   const dn = el("acc-display-name");
+  const ss = el("acc-shared-secret");
+  const is = el("acc-identity-secret");
+  const dev = el("acc-device-id");
   if (title) title.textContent = editId ? "编辑账号" : "添加账号";
   if (un) un.value = "";
   if (pw) pw.value = "";
   if (sid) sid.value = "";
   if (dn) dn.value = "";
+  if (ss) ss.value = "";
+  if (is) is.value = "";
+  if (dev) dev.value = "";
   if (editId) {
-    const accs = [];
     fetchJson(API + "/accounts").then((d) => {
       const a = (d.accounts || []).find((x) => x.id === editId);
       if (a) {
@@ -363,9 +371,14 @@ function openAccountForm(editId = null) {
         if (pw) pw.placeholder = "已保存，留空不修改";
         if (sid) sid.value = a.steam_id || "";
         if (dn) dn.value = a.display_name || "";
+        if (ss) ss.value = a.shared_secret || "";
+        if (is) is.value = a.identity_secret || "";
+        if (dev) dev.value = a.device_id || "";
       }
     }).catch(() => { });
-  } else if (pw) pw.placeholder = "保存后仅用于自动填充";
+  } else {
+    if (pw) pw.placeholder = "保存后仅用于自动填充";
+  }
   const ov = el("account-form-overlay");
   if (ov) ov.classList.remove("hidden");
 }
@@ -379,9 +392,19 @@ async function saveAccountForm() {
   const pw = (el("acc-password")?.value || "").trim();
   const sid = (el("acc-steam-id")?.value || "").trim();
   const dn = (el("acc-display-name")?.value || "").trim();
+  const ss = (el("acc-shared-secret")?.value || "").trim();
+  const is = (el("acc-identity-secret")?.value || "").trim();
+  const dev = (el("acc-device-id")?.value || "").trim();
   try {
     if (accountEditId) {
-      const body = { username: un, steam_id: sid, display_name: dn };
+      const body = {
+        username: un,
+        steam_id: sid,
+        display_name: dn,
+        shared_secret: ss,
+        identity_secret: is,
+        device_id: dev,
+      };
       if (pw) body.password = pw;
       const r = await fetchJson(API + "/accounts/" + accountEditId, {
         method: "PUT",
@@ -392,7 +415,16 @@ async function saveAccountForm() {
     } else {
       const r = await fetchJson(API + "/accounts", {
         method: "POST",
-        body: JSON.stringify({ username: un, password: pw, steam_id: sid, display_name: dn, avatar_url: "" }),
+        body: JSON.stringify({
+          username: un,
+          password: pw,
+          steam_id: sid,
+          display_name: dn,
+          avatar_url: "",
+          shared_secret: ss,
+          identity_secret: is,
+          device_id: dev,
+        }),
       });
       if (r.ok) { toast("已添加"); closeAccountForm(); refreshAccounts(); }
       else toast("添加失败", r.error || "");

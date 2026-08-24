@@ -157,10 +157,16 @@ def fetch_steam_profile_via_api(steam_id: str, cookies_str: str) -> tuple:
     except Exception:
         pass
     return display_name, avatar_url
-def _get_shared_secret() -> str:
+def _get_shared_secret(account: Optional[dict] = None) -> str:
     try:
-        cfg = load_app_config_validated()
-        raw = ((cfg.get("steam_guard") or {}).get("shared_secret") or "").strip()
+        if account and account.get("shared_secret"):
+            raw = (account.get("shared_secret") or "").strip()
+        else:
+            cur = get_current_account() or {}
+            raw = (cur.get("shared_secret") or "").strip()
+            if not raw:
+                cfg = load_app_config_validated()
+                raw = ((cfg.get("steam_guard") or {}).get("shared_secret") or "").strip()
         if raw:
             return re.sub(r'\\u([0-9a-fA-F]{4})', lambda m: chr(int(m.group(1), 16)), raw)
         return ""
@@ -175,14 +181,23 @@ def _build_steam_guard_dict(cur: dict, cfg: dict) -> Optional[dict]:
         "identity_secret": "...",
         "device_id": "...",
     }
-    We assemble this from the app config and account info.
+    Priority: account-level secrets -> global config fallback.
     """
-    shared_secret = ((cfg.get("steam_guard") or {}).get("shared_secret") or "").strip()
+    shared_secret = (cur.get("shared_secret") or "").strip()
+    if not shared_secret:
+        shared_secret = ((cfg.get("steam_guard") or {}).get("shared_secret") or "").strip()
     if shared_secret:
         shared_secret = re.sub(r'\\u([0-9a-fA-F]{4})', lambda m: chr(int(m.group(1), 16)), shared_secret)
-    identity_secret = ((cfg.get("steam_confirm") or {}).get("identity_secret") or "").strip()
-    device_id       = ((cfg.get("steam_confirm") or {}).get("device_id") or "").strip()
-    steam_id        = (cur.get("steam_id") or "").strip()
+
+    identity_secret = (cur.get("identity_secret") or "").strip()
+    if not identity_secret:
+        identity_secret = ((cfg.get("steam_confirm") or {}).get("identity_secret") or "").strip()
+
+    device_id = (cur.get("device_id") or "").strip()
+    if not device_id:
+        device_id = ((cfg.get("steam_confirm") or {}).get("device_id") or "").strip()
+
+    steam_id = (cur.get("steam_id") or "").strip()
     if not shared_secret:
         return None  
     return {

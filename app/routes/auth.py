@@ -562,14 +562,33 @@ def api_auth_manual_cookie(relogin_type: str, body: ManualCookieBody):
         return {"ok": True, "message": "Buff Cookie 已保存"}
     return {"ok": False, "error": "未知登录类型"}
 @router.get("/api/steam_guard")
-def api_steam_guard():
-    cfg = load_app_config_validated()
-    sg = cfg.get("steam_guard") or {}
-    shared_secret = (sg.get("shared_secret") or "").strip()
+def api_steam_guard(account_id: Optional[str] = None):
+    from app.accounts import get_account, get_current_account
+    target_acc = get_account(account_id) if account_id else get_current_account()
+    shared_secret = ""
+    account_info = None
+    if target_acc:
+        shared_secret = (target_acc.get("shared_secret") or "").strip()
+        account_info = {
+            "id": target_acc.get("id"),
+            "username": target_acc.get("username"),
+            "display_name": target_acc.get("display_name"),
+            "steam_id": target_acc.get("steam_id"),
+        }
     if not shared_secret:
-        return {"ok": False, "error": "未配置 shared_secret"}
+        cfg = load_app_config_validated()
+        sg = cfg.get("steam_guard") or {}
+        shared_secret = (sg.get("shared_secret") or "").strip()
+    if not shared_secret:
+        return {"ok": False, "error": "未配置 shared_secret", "account": account_info}
     code = _generate_steam_guard_code(shared_secret)
     if not code:
-        return {"ok": False, "error": "shared_secret 无效"}
+        return {"ok": False, "error": "shared_secret 无效", "account": account_info}
     now_ts = int(time.time())
-    return {"ok": True, "code": code, "server_time": now_ts, "period": 30}
+    return {
+        "ok": True,
+        "code": code,
+        "server_time": now_ts,
+        "period": 30,
+        "account": account_info,
+    }

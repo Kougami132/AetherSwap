@@ -579,8 +579,14 @@ def _auto_confirm_listings(ctx: PipelineContext, cfg: dict, steam_id: str, cooki
     steam_confirm_cfg = cfg.get("steam_confirm") or {}
     if not bool(steam_confirm_cfg.get("enabled")):
         return
-    identity_secret = (steam_confirm_cfg.get("identity_secret") or "").strip()
-    device_id = (steam_confirm_cfg.get("device_id") or "").strip()
+    from app.accounts import get_current_account
+    cur_acc = get_current_account() or {}
+    identity_secret = (cur_acc.get("identity_secret") or "").strip()
+    if not identity_secret:
+        identity_secret = (steam_confirm_cfg.get("identity_secret") or "").strip()
+    device_id = (cur_acc.get("device_id") or "").strip()
+    if not device_id:
+        device_id = (steam_confirm_cfg.get("device_id") or "").strip()
     if not identity_secret or not device_id:
         ctx.log("[确认] 已开启自动确认，但 identity_secret/device_id 未配置，跳过", "warn", category="steam")
         return
