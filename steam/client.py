@@ -265,6 +265,7 @@ def fetch_history(
     proxies: Optional[dict] = None,
     cookies: Optional[Union[dict, str]] = None,
     return_currency: bool = False,
+    return_error: bool = False,
 ) -> Union[Optional[list], Optional[dict]]:
     encoded = quote(market_hash_name, safe="")
     url = f"https://steamcommunity.com/market/pricehistory/?appid={app_id}&market_hash_name={encoded}"
@@ -288,17 +289,29 @@ def fetch_history(
             timeout=timeout,
         )
         if resp.status_code != 200:
-            return None
-        data = resp.json()
+            result = None
+            error = f"HTTP {resp.status_code}"
+            return (result, error) if return_error else result
+        try:
+            data = resp.json()
+        except ValueError as exc:
+            result = None
+            error = f"响应不是 JSON: {type(exc).__name__}"
+            return (result, error) if return_error else result
         if not data or not data.get("success") or "prices" not in data:
-            return None
+            result = None
+            error = "响应缺少 success/prices"
+            return (result, error) if return_error else result
         history = data["prices"]
         if return_currency:
             currency_clue = data.get("price_prefix", "") + data.get("price_suffix", "")
             currency = detect_currency(currency_clue)
             if not currency:
                 currency = detect_currency(resp.text)
-            return {"history": history, "currency": currency}
-        return history
-    except Exception:
-        return None
+            result = {"history": history, "currency": currency}
+            return (result, None) if return_error else result
+        return (history, None) if return_error else history
+    except Exception as exc:
+        result = None
+        error = f"{type(exc).__name__}: {str(exc)[:160]}"
+        return (result, error) if return_error else result

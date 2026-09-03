@@ -194,6 +194,7 @@ def get_wallet_balance(cookies_raw: str) -> dict:
     pm = get_proxy_manager()
     proxies = pm.get_proxies_for_request()
     unknown_currency_id = None
+    failures = []
     try:
         resp = requests.get(
             "https://steamcommunity.com/market/",
@@ -203,6 +204,8 @@ def get_wallet_balance(cookies_raw: str) -> dict:
             verify=False,
             timeout=15,
         )
+        if resp.status_code != 200:
+            raise RuntimeError(f"市场页 HTTP {resp.status_code}")
         m = re.search(r'g_rgWalletInfo\s*=\s*(\{[^;]+\})', resp.text)
         if m:
             wallet = json.loads(m.group(1))
@@ -232,8 +235,9 @@ def get_wallet_balance(cookies_raw: str) -> dict:
                     "wallet_country": wallet_country,
                     "country_code": wallet_country,
                 }
-    except Exception:
-        pass
+        raise RuntimeError("市场页未包含钱包信息")
+    except Exception as exc:
+        failures.append(f"市场页: {type(exc).__name__}: {str(exc)[:120]}")
     try:
         jwt_token, _, _ = get_base_auth_status(cookies_raw)
         if jwt_token:
@@ -242,8 +246,10 @@ def get_wallet_balance(cookies_raw: str) -> dict:
                 f"?access_token={jwt_token}"
             )
             resp = requests.get(api_url, headers=_HEADERS, proxies=proxies, verify=False, timeout=15)
-            if resp.status_code == 200:
-                data = resp.json().get("response", {})
+            if resp.status_code != 200:
+                raise RuntimeError(f"Wallet API HTTP {resp.status_code}")
+            data = resp.json().get("response", {})
+            if data:
                 balance_raw  = int(data.get("balance", 0))
                 delayed_raw  = int(data.get("delayed_balance", 0))
                 total_raw    = balance_raw + delayed_raw
@@ -274,11 +280,14 @@ def get_wallet_balance(cookies_raw: str) -> dict:
                         "wallet_country": wallet_country,
                         "country_code": wallet_country,
                     }
-    except Exception:
-        pass
+            raise RuntimeError("Wallet API 响应为空")
+        raise RuntimeError("市场页未提供 webapi_token")
+    except Exception as exc:
+        failures.append(f"Wallet API: {type(exc).__name__}: {str(exc)[:120]}")
     if unknown_currency_id is not None:
         raise RuntimeError(f"未知 Steam 钱包币种 ID: {unknown_currency_id}")
-    raise RuntimeError("无法获取 Steam 钱包余额，请确认 Cookie 有效且账户已设置钱包")
+    detail = "；".join(failures)
+    raise RuntimeError(f"无法获取 Steam 钱包余额（{detail}）")
 def extract_appid_from_url(url: str) -> str:
     m = re.search(r'/app/(\d+)', url)
     return m.group(1) if m else ""

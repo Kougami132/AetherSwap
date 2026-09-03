@@ -5,6 +5,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from steam.client import (  # noqa: E402
+    fetch_history,
     market_hash_name_from_listing_url,
     resolve_market_hash_name_from_listing_url,
 )
@@ -43,6 +44,9 @@ class DummyResponse:
 
     def __init__(self, text):
         self.text = text
+
+    def json(self):
+        return json.loads(self.text)
 
 
 class DummySession:
@@ -102,3 +106,14 @@ def test_resolve_group_listing_url_honors_category_filters():
     )
 
     assert name == "Dual Berettas | Contractor (Minimal Wear)"
+
+
+def test_fetch_history_can_return_http_failure_reason(monkeypatch):
+    response = DummyResponse("null")
+    response.status_code = 429
+    monkeypatch.setattr("steam.client.requests.get", lambda *args, **kwargs: response)
+
+    result, error = fetch_history("Fracture Case", return_error=True)
+
+    assert result is None
+    assert error == "HTTP 429"

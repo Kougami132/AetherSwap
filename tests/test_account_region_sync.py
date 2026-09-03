@@ -298,6 +298,32 @@ def test_get_wallet_balance_rejects_unknown_currency_id(monkeypatch):
         raise AssertionError("unknown wallet currency must not default to USD")
 
 
+def test_get_wallet_balance_preserves_http_429_failures(monkeypatch):
+    from app import gift_engine
+    import utils.proxy_manager as proxy_manager
+
+    class _RateLimitedResponse:
+        status_code = 429
+        text = ""
+
+        def json(self):
+            return {}
+
+    responses = iter([_RateLimitedResponse(), _RateLimitedResponse()])
+    monkeypatch.setattr(proxy_manager, "get_proxy_manager", lambda: _ProxyManager())
+    monkeypatch.setattr(gift_engine, "get_base_auth_status", lambda cookies: ("jwt-token", "CN", {}))
+    monkeypatch.setattr(gift_engine.requests, "get", lambda *args, **kwargs: next(responses))
+
+    try:
+        gift_engine.get_wallet_balance("steamLoginSecure=x")
+    except RuntimeError as exc:
+        message = str(exc)
+        assert "市场页: RuntimeError: 市场页 HTTP 429" in message
+        assert "Wallet API: RuntimeError: Wallet API HTTP 429" in message
+    else:
+        raise AssertionError("HTTP 429 failures must be preserved")
+
+
 def test_gift_balance_rejects_cookie_for_different_current_account(monkeypatch):
     from app.routes import gift
 

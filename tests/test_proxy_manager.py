@@ -95,3 +95,11 @@ def test_新配置代理在异步预热完成前可用():
         "http": "http://fresh-proxy.example:8080/",
         "https": "http://fresh-proxy.example:8080/",
     }
+def test_describe_proxies_redacts_credentials():
+    from utils.proxy_manager import describe_proxies
+
+    value = describe_proxies({"https": "http://user:secret@198.51.100.20:6462/"})
+
+    assert value == "198.51.100.20:6462"
+    assert "user" not in value
+    assert "secret" not in value

@@ -11,6 +11,22 @@ import time
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
+
+
+def describe_proxies(proxies: Optional[dict]) -> str:
+    """Return a log-safe proxy endpoint without credentials."""
+    if not proxies:
+        return "direct"
+    raw = proxies.get("https") or proxies.get("http") or ""
+    try:
+        from urllib.parse import urlsplit
+
+        parsed = urlsplit(raw)
+        if parsed.hostname:
+            return f"{parsed.hostname}:{parsed.port}" if parsed.port else parsed.hostname
+    except (TypeError, ValueError):
+        pass
+    return "configured"
 def _load_proxy_pool_cfg() -> dict:
     try:
         from app.config_loader import load_app_config_validated
@@ -205,7 +221,7 @@ class ProxyManager:
             proxy = self.get_next_proxy_dict()
             _pm_log(
                 f"[ProxyManager] get_proxies_for_request(failed={failed}): "
-                f"策略2=始终代理 → {proxy.get('http') if proxy else 'None(池空)'}"
+                f"策略2=始终代理 → {describe_proxies(proxy)}"
             )
             return proxy
         if strategy == 1:
@@ -213,7 +229,7 @@ class ProxyManager:
                 proxy = self.get_next_proxy_dict()
                 _pm_log(
                     f"[ProxyManager] get_proxies_for_request(failed=True): "
-                    f"策略1=失败切代理 → {proxy.get('http') if proxy else 'None(池空)'}"
+                    f"策略1=失败切代理 → {describe_proxies(proxy)}"
                 )
                 return proxy
             else:

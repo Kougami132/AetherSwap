@@ -6,6 +6,7 @@ from steam.client import (
     fetch_history as _fetch_history,
     market_hash_name_from_listing_url as _market_hash_name_from_listing_url,
 )
+from utils.proxy_manager import describe_proxies
 steam_timeout = 15
 steam_retry_attempts = 2
 _history_cache: Dict[str, tuple] = {}
@@ -57,18 +58,25 @@ class SteamClient:
             if proxies is None and not pm.is_proxy_enabled():
                 proxy_url = cfg.get("steam", {}).get("proxy")
                 proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
-            result = _fetch_history(
+            result, error = _fetch_history(
                 market_hash_name,
                 app_id=app_id,
                 timeout=self._timeout,
                 return_currency=return_currency,
                 cookies=cookies,
                 proxies=proxies,
+                return_error=True,
             )
             if result is not None:
                 return result
             from app.state import log
-            log(f"[SteamClient] 历史数据请求失败 (attempt={attempt+1}/{steam_retry_attempts}) proxies={proxies}", "debug", category="proxy")
+            log(
+                f"[SteamClient] 历史数据请求失败 "
+                f"(attempt={attempt+1}/{steam_retry_attempts}) "
+                f"reason={error or '未知原因'} proxy={describe_proxies(proxies)}",
+                "debug",
+                category="proxy",
+            )
             if attempt < steam_retry_attempts - 1:
                 from utils.delay import jittered_sleep
                 jittered_sleep(1.0)
