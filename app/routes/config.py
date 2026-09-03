@@ -33,6 +33,11 @@ def _save_credentials_with_auth_lock(data: dict) -> None:
         save_credentials(data)
 class ConfigBody(BaseModel):
     config: dict
+
+
+class NotifyTestBody(BaseModel):
+    title: str = "AetherSwap 测试通知"
+    content: str = "OneBot v11 通知配置测试成功。"
 class ImportFullBody(BaseModel):
     app_config: Optional[dict] = None
     credentials: Optional[dict] = None
@@ -47,6 +52,26 @@ def api_get_config(response: Response):
 def api_save_config(body: ConfigBody):
     saved = update_app_config_validated(body.config)
     return {"ok": True, "config": saved}
+
+
+@router.post("/api/notify/test")
+def api_notify_test(body: NotifyTestBody):
+    from app.notify import send_onebot
+
+    cfg = load_app_config_validated()
+    notify_cfg = cfg.get("notify") or {}
+    if not notify_cfg.get("onebot_enabled"):
+        return {"ok": False, "error": "请先启用 OneBot 通知并保存设置"}
+    if send_onebot(
+        notify_cfg.get("onebot_url"),
+        notify_cfg.get("onebot_access_token"),
+        notify_cfg.get("onebot_target_type"),
+        notify_cfg.get("onebot_target_id"),
+        body.title,
+        body.content,
+    ):
+        return {"ok": True, "message": "OneBot 测试通知已发送"}
+    return {"ok": False, "error": "OneBot 测试通知发送失败，请检查 URL、密钥和目标 ID"}
 def _api_data_init_unlocked():
     from app.state import clear_log
     from pathlib import Path
@@ -90,6 +115,11 @@ def _api_data_init_unlocked():
         },
         "notify": {
             "pushplus_token": "",
+            "onebot_enabled": False,
+            "onebot_url": "",
+            "onebot_access_token": "",
+            "onebot_target_type": "private",
+            "onebot_target_id": "",
             "email_user": "",
             "email_pass": "",
             "imap_server": "",

@@ -23,7 +23,7 @@ from app.services.buff_checkout_guard import (
     update_checkout,
 )
 from app.services.buff_auth import get_buff_auth_lock
-from app.notify import send_pushplus, build_payment_notify_content, wait_email_command
+from app.notify import send_notifications, build_payment_notify_content, wait_email_command
 from utils.delay import jittered_sleep
 from buff import (
     BuffAuthExpired,
@@ -1054,8 +1054,7 @@ def _do_payment_notify_and_wait(
         if on_entering_payment:
             on_entering_payment()
         notify_cfg = config.get("notify") or {}
-        push_token = (notify_cfg.get("pushplus_token") or "").strip()
-        if push_token:
+        if (notify_cfg.get("pushplus_token") or "").strip() or notify_cfg.get("onebot_enabled"):
             sell_ratio = None
             value_ratio = item.get("value_ratio")
             try:
@@ -1074,7 +1073,7 @@ def _do_payment_notify_and_wait(
                 steam_market_hash_name=mhn, steam_link=sl
             )
             try:
-                if send_pushplus(push_token, "Buff 待付款", content):
+                if send_notifications(notify_cfg, "Buff 待付款", content):
                     if log_fn:
                         log_fn("[Buff]   → PushPlus 推送已发送", "info")
                 else:

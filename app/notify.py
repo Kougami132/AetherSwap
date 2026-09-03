@@ -6,6 +6,9 @@ from email.header import decode_header
 from urllib.parse import quote
 from typing import Callable, Optional
 import requests
+import re
+
+
 def send_pushplus(token: str, title: str, content: str, template: str = "html") -> bool:
     if not token or not token.strip():
         return False
@@ -18,6 +21,67 @@ def send_pushplus(token: str, title: str, content: str, template: str = "html") 
         return r.status_code == 200
     except Exception:
         return False
+
+
+def send_onebot(
+    url: str,
+    access_token: str,
+    target_type: str,
+    target_id: str,
+    title: str,
+    content: str,
+) -> bool:
+    """Send a message through a OneBot v11 HTTP API endpoint."""
+    url = (url or "").strip().rstrip("/")
+    target_type = (target_type or "private").strip().lower()
+    target_id = str(target_id or "").strip()
+    if not url or target_type not in {"private", "group"} or not target_id:
+        return False
+    action = "send_private_msg" if target_type == "private" else "send_group_msg"
+    payload = {
+        "message": f"{title}\n{_onebot_plain_text(content)}",
+    }
+    payload["user_id" if target_type == "private" else "group_id"] = int(target_id) if target_id.isdigit() else target_id
+    headers = {"Content-Type": "application/json"}
+    token = (access_token or "").strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        response = requests.post(f"{url}/{action}", json=payload, headers=headers, timeout=10)
+        if not 200 <= response.status_code < 300:
+            return False
+        try:
+            result = response.json()
+        except ValueError:
+            return True
+        return result.get("retcode", 0) == 0
+    except Exception:
+        return False
+
+
+def _onebot_plain_text(content: str) -> str:
+    text = re.sub(r"<br\s*/?>", "\n", content or "", flags=re.IGNORECASE)
+    text = re.sub(r"<a[^>]*>(.*?)</a>", r"\1", text, flags=re.IGNORECASE | re.DOTALL)
+    return re.sub(r"<[^>]+>", "", text).strip()
+
+
+def send_notifications(notify_cfg: dict, title: str, content: str) -> bool:
+    """Send to every configured push channel; true when at least one succeeds."""
+    cfg = notify_cfg or {}
+    results = []
+    push_token = (cfg.get("pushplus_token") or "").strip()
+    if push_token:
+        results.append(send_pushplus(push_token, title, content))
+    if cfg.get("onebot_enabled"):
+        results.append(send_onebot(
+            cfg.get("onebot_url"),
+            cfg.get("onebot_access_token"),
+            cfg.get("onebot_target_type"),
+            cfg.get("onebot_target_id"),
+            title,
+            content,
+        ))
+    return any(results)
 _last_manual_notify_time: dict = {}
 _last_manual_notify_lock = threading.Lock()  
 def notify_manual_intervention_required(platform: str, reason: str) -> bool:
@@ -34,8 +98,7 @@ def notify_manual_intervention_required(platform: str, reason: str) -> bool:
         _last_manual_notify_time[platform] = now
     cfg = load_app_config_validated()
     notify_cfg = cfg.get("notify") or {}
-    token = (notify_cfg.get("pushplus_token") or "").strip()
-    if not token:
+    if not (notify_cfg.get("pushplus_token") or "").strip() and not notify_cfg.get("onebot_enabled"):
         with _last_manual_notify_lock:
             _last_manual_notify_time[platform] = last_time
         return False
@@ -46,7 +109,7 @@ def notify_manual_intervention_required(platform: str, reason: str) -> bool:
         f"<span style='color: red;'>{reason}</span><br/><br/>"
         f"为了避免被限制或错失交易，请尽快前往图形界面或浏览器完成手动登录与验证操作。"
     )
-    success = send_pushplus(token, title, content)
+    success = send_notifications(notify_cfg, title, content)
     if not success:
         with _last_manual_notify_lock:
             _last_manual_notify_time[platform] = last_time

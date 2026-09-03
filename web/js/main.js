@@ -530,6 +530,7 @@ function bindEvents() {
       .then(() => toast("设置已保存"))
       .catch((e) => toast("保存失败", e.message || "请稍后再试"))
   );
+  el("btn-onebot-test")?.addEventListener("click", testOnebotNotification);
   el("btn-refresh-inventory")?.addEventListener("click", () => refreshInventory(true));
   el("btn-refresh-sales")?.addEventListener("click", () => refreshTransactions());
   el("btn-add-account")?.addEventListener("click", () => openAccountForm());

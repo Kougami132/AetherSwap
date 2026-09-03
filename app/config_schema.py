@@ -78,6 +78,11 @@ DEFAULTS = {
     },
     "notify": {
         "pushplus_token": "",
+        "onebot_enabled": False,
+        "onebot_url": "",
+        "onebot_access_token": "",
+        "onebot_target_type": "private",
+        "onebot_target_id": "",
         "holdings_report_interval_hours": 0,
         "holdings_report_change_threshold_pct": 20,
         "holdings_report_drop_enabled": True,
@@ -162,7 +167,12 @@ def _validate_ranges(cfg: dict) -> dict:
     buff = cfg.get("buff") or {}
     inv = cfg.get("inventory") or {}
     system = cfg.get("system") or {}
+    notify = cfg.get("notify") or {}
 
+    notify_type = str(notify.get("onebot_target_type") or "private").strip().lower()
+    if notify_type not in {"private", "group"}:
+        notify_type = "private"
+    notify["onebot_target_type"] = notify_type
     if isinstance(pipe.get("max_discount"), (int, float)):
         v = pipe["max_discount"]
         if not (0 < v <= 1):

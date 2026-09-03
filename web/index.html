@@ -969,8 +969,43 @@
                   <label for="cfg-holdings_report_interval_hours">定时回报间隔（小时）</label>
                   <input type="number" id="cfg-holdings_report_interval_hours" min="0" max="720" placeholder="0"
                     title="每隔 N 小时定时推送一次持有饰品回报；0 = 关闭定时回报" />
+                  </div>
+              </div>
+              <div class="field-row">
+                <div class="field field--switch">
+                  <label class="checkbox-wrapper">
+                    <input type="checkbox" id="cfg-onebot-enabled" />
+                    <span>启用 OneBot v11 通知</span>
+                  </label>
+                </div>
+                <div class="field">
+                  <label for="cfg-onebot-target-type">发送方式</label>
+                  <select id="cfg-onebot-target-type">
+                    <option value="private">私聊</option>
+                    <option value="group">群聊</option>
+                  </select>
                 </div>
               </div>
+              <div class="field-row">
+                <div class="field">
+                  <label for="cfg-onebot-url">OneBot HTTP URL</label>
+                  <input type="url" id="cfg-onebot-url" placeholder="http://127.0.0.1:5700" autocomplete="off" />
+                </div>
+                <div class="field">
+                  <label for="cfg-onebot-access-token">OneBot 密钥（可空）</label>
+                  <input type="password" id="cfg-onebot-access-token" placeholder="Authorization Bearer Token" autocomplete="new-password" />
+                </div>
+              </div>
+              <div class="field-row">
+                <div class="field">
+                  <label for="cfg-onebot-target-id">目标 ID</label>
+                  <input type="text" id="cfg-onebot-target-id" placeholder="QQ 号或群号" inputmode="numeric" autocomplete="off" />
+                </div>
+                <div class="field field--actions">
+                  <button type="button" id="btn-onebot-test" class="btn btn-sm btn-secondary">发送测试通知</button>
+                </div>
+              </div>
+              <span class="field-hint">URL 填 OneBot v11 HTTP API 地址，例如 http://127.0.0.1:5700；系统会根据发送方式调用对应接口。</span>
               <div class="field-row">
                 <div class="field">
                   <label for="cfg-holdings_report_change_threshold_pct">紧急跌幅阈值（%）</label>

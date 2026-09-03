@@ -151,6 +151,16 @@ async function loadConfig() {
   const n = c.notify || {};
   const gPush = el("cfg-pushplus_token");
   if (gPush) gPush.value = n.pushplus_token ?? "";
+  const gOnebotEnabled = el("cfg-onebot-enabled");
+  if (gOnebotEnabled) gOnebotEnabled.checked = n.onebot_enabled === true;
+  const gOnebotUrl = el("cfg-onebot-url");
+  if (gOnebotUrl) gOnebotUrl.value = n.onebot_url ?? "";
+  const gOnebotToken = el("cfg-onebot-access-token");
+  if (gOnebotToken) gOnebotToken.value = n.onebot_access_token ?? "";
+  const gOnebotType = el("cfg-onebot-target-type");
+  if (gOnebotType) gOnebotType.value = n.onebot_target_type || "private";
+  const gOnebotId = el("cfg-onebot-target-id");
+  if (gOnebotId) gOnebotId.value = n.onebot_target_id ?? "";
   const gHoldingsReport = el("cfg-holdings_report_interval_hours");
   if (gHoldingsReport) gHoldingsReport.value = n.holdings_report_interval_hours ?? "";
   const gHoldingsThreshold = el("cfg-holdings_report_change_threshold_pct");
@@ -297,6 +307,11 @@ function formToConfig() {
     },
     notify: {
       pushplus_token: el("cfg-pushplus_token") ? el("cfg-pushplus_token").value.trim() : undefined,
+      onebot_enabled: !!el("cfg-onebot-enabled")?.checked,
+      onebot_url: el("cfg-onebot-url") ? el("cfg-onebot-url").value.trim() : undefined,
+      onebot_access_token: el("cfg-onebot-access-token") ? el("cfg-onebot-access-token").value.trim() : undefined,
+      onebot_target_type: el("cfg-onebot-target-type") ? el("cfg-onebot-target-type").value : undefined,
+      onebot_target_id: el("cfg-onebot-target-id") ? el("cfg-onebot-target-id").value.trim() : undefined,
       holdings_report_interval_hours: el("cfg-holdings_report_interval_hours") ? parseInt(el("cfg-holdings_report_interval_hours").value, 10) : undefined,
       holdings_report_change_threshold_pct: el("cfg-holdings_report_change_threshold_pct") ? parseFloat(el("cfg-holdings_report_change_threshold_pct").value) : undefined,
       holdings_report_drop_enabled: el("cfg-holdings-drop-enabled") ? !!el("cfg-holdings-drop-enabled").checked : undefined,
@@ -358,6 +373,19 @@ async function saveConfigFromForm() {
   if (!saved.ok) throw new Error(saved.error || "配置写入失败");
   await loadConfig();
   setupInventoryAutoRefresh();
+}
+async function testOnebotNotification() {
+  try {
+    await saveConfigFromForm();
+    const result = await fetchJson(API + "/notify/test", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    if (!result.ok) throw new Error(result.error || "发送失败");
+    toast("测试通知已发送", "请检查 OneBot 私聊或群聊消息");
+  } catch (e) {
+    toast("测试通知失败", e.message || "请检查 OneBot 配置");
+  }
 }
 async function startPipeline() {
   try {

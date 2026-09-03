@@ -24,7 +24,7 @@ from app.config_loader import (
     get_steam_credentials,
     load_app_config_validated,
 )
-from app.notify import send_pushplus, build_holdings_report_content, compute_holdings_stats
+from app.notify import send_notifications, build_holdings_report_content, compute_holdings_stats
 from app.inventory_cs2 import scan_cs2_inventory
 from app.accounts import get_current_account, update_account
 _HOLDINGS_REPORT_LAST_FILE = Path(__file__).resolve().parent.parent.parent / "config" / "holdings_report_last.json"
@@ -40,11 +40,11 @@ def _worker_alert(worker_name: str, error: Exception) -> None:
         return
     try:
         cfg = load_app_config_validated()
-        token = (cfg.get("notify") or {}).get("pushplus_token", "") or ""
-        if not token:
+        notify_cfg = cfg.get("notify") or {}
+        if not (notify_cfg.get("pushplus_token") or "").strip() and not notify_cfg.get("onebot_enabled"):
             return
         msg = str(error)[:200] if error else "未知异常"
-        send_pushplus(token, f"[Worker异常] {worker_name}", f"后台任务 <b>{worker_name}</b> 发生异常，已自动重试。<br>错误信息：{msg}")
+        send_notifications(notify_cfg, f"[Worker异常] {worker_name}", f"后台任务 <b>{worker_name}</b> 发生异常，已自动重试。<br>错误信息：{msg}")
         _worker_alert_last[worker_name] = now
         log(f"[{worker_name}] 异常告警已发送", "info", category="alert")
     except Exception:
@@ -90,8 +90,7 @@ def run_holdings_report_once(force: bool = False) -> bool:
         return False
     cfg = load_app_config_validated()
     notify_cfg = cfg.get("notify") or {}
-    token = (notify_cfg.get("pushplus_token") or "").strip()
-    if not token:
+    if not (notify_cfg.get("pushplus_token") or "").strip() and not notify_cfg.get("onebot_enabled"):
         return False
     resell_ratio = float(cfg.get("pipeline", {}).get("resell_ratio", 0.85))
     if resell_ratio <= 0:
@@ -132,7 +131,7 @@ def run_holdings_report_once(force: bool = False) -> bool:
         if drop < drop_threshold_pct:
             return False
     content = build_holdings_report_content(holdings_enriched, resell_ratio)
-    ok = send_pushplus(token, "持有饰品紧急回报" if not force else "持有饰品定时回报", content)
+    ok = send_notifications(notify_cfg, "持有饰品紧急回报" if not force else "持有饰品定时回报", content)
     if ok and pl_pct is not None:
         _save_last_pl_pct(pl_pct)
     return ok
