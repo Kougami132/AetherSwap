@@ -106,6 +106,17 @@ def _is_verification_required(data: dict) -> bool:
     )
     return any(marker in haystack for marker in markers)
 
+
+def _is_expired_bill_order_response(url: str, data: dict) -> bool:
+    """Payment expiry is an order-state result, not an account challenge."""
+    if str(url or "").rstrip("/") != API_PAGE_PAY:
+        return False
+    code = str(data.get("code") or "").lower()
+    text = str(
+        data.get("error") or data.get("msg") or data.get("message") or ""
+    ).lower()
+    return "billorder pay expire" in code or "订单已过期" in text
+
 def _is_rate_limited(status_code: int, data: dict) -> bool:
     if status_code == 429:
         return True
@@ -574,6 +585,8 @@ class BuffBuyer:
                         status_code=status_code,
                     )
                 raise BuffAuthExpired()
+            if _is_expired_bill_order_response(url, data):
+                return data
             if _is_verification_required(data) or _is_verification_required(
                 {"message": response_text}
             ):
@@ -1609,6 +1622,13 @@ class BuffBuyer:
             "hide_non_epay": True,
             "steamid": self.steam_id or None,
         }
+        logger.info(
+            "BUFF /goods/buy 请求支付方式: game=%s goods_id=%s sell_order_id=%s pay_method=%s",
+            game,
+            goods_id,
+            sell_order_id,
+            effective_pay_method,
+        )
         h = {"Referer": f"https://buff.163.com/goods/{goods_id}?from=market"}
         try:
             res = self._make_request(
@@ -1736,15 +1756,35 @@ class BuffBuyer:
             "X-Requested-With": "XMLHttpRequest", 
             "Referer": f"https://buff.163.com/market/buy_order/history?game={game}"
         }
-        try:
-            res = self._make_request("GET", API_PAGE_PAY, params=params, headers=h)
-            if res.get("code") == "OK":
-                data = res.get("data", {})
-                return data.get("elements_v2", {}).get("alipay", {}).get("url") or data.get("elements", {}).get("url") or data.get("url")
-        except (BuffAuthExpired, BuffRequestBlocked):
-            raise
-        except Exception:
-            pass
+        # BUFF can expose the newly-created order in history before the
+        # cashier record is readable by page_pay.  Treat its misleading
+        # Pay-Expire response as transient for a short, bounded window.
+        for attempt in range(3):
+            try:
+                params["_"] = str(int(time.time() * 1000))
+                res = self._make_request(
+                    "GET",
+                    API_PAGE_PAY,
+                    params=params,
+                    headers=h,
+                )
+                if res.get("code") == "OK":
+                    data = res.get("data", {})
+                    return data.get("elements_v2", {}).get("alipay", {}).get("url") or data.get("elements", {}).get("url") or data.get("url")
+                logger.warning(
+                    "支付宝支付链接接口返回错误 (attempt=%s/3): code=%s msg=%s",
+                    attempt + 1,
+                    res.get("code"),
+                    res.get("error") or res.get("msg") or res.get("message") or "未知错误",
+                )
+                if res.get("code") != "BillOrder Pay Expire" or attempt == 2:
+                    break
+                jittered_sleep(0.8 * (attempt + 1))
+            except (BuffAuthExpired, BuffRequestBlocked):
+                raise
+            except Exception as exc:
+                logger.warning("支付宝支付链接请求异常 (attempt=%s/3): %s", attempt + 1, exc)
+                break
         return None
     def _get_wechat_pay_url(self, game: str, order_id: str) -> Optional[str]:
         params = {"bill_order_id": str(order_id), "_": str(int(time.time() * 1000))}

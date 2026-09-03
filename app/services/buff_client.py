@@ -94,6 +94,11 @@ class BuffClient:
         self._client_lock = threading.RLock()
         self._auth_lock = get_buff_auth_lock()
         self._buyer = self._new_buyer(self._cookies, self._user_agent)
+        logger.info(
+            "BUFF 支付方式已初始化: method=%s pay_method=%s",
+            self._pay_method,
+            self._pay_method_id,
+        )
 
     @staticmethod
     def _normalize_pay_method(value: Any) -> str:
@@ -294,6 +299,11 @@ class BuffClient:
     ) -> Dict[str, Any]:
         selected_method = self._normalize_pay_method(pay_method or self._pay_method)
         selected_method_id = PAY_METHOD_NAMES[selected_method]
+        logger.info(
+            "BUFF 锁单支付方式: method=%s pay_method=%s",
+            selected_method,
+            selected_method_id,
+        )
         result = self._run(
             lambda buyer: buyer.lock_and_get_pay_url(
                 game,
@@ -463,7 +473,12 @@ class BuffClient:
                     "msg": error,
                     "safe_to_fallback": safe_to_fallback,
                 }
-            return {"success": True, "created": False, "preview": preview}
+            return {
+                "success": True,
+                "created": False,
+                "preview": preview,
+                "pay_method": self._pay_method,
+            }
 
         return self._run(operation)
 

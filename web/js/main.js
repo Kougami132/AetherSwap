@@ -227,9 +227,13 @@ async function refreshStatus() {
 }
 let reloginType = "steam";
 let inventoryRefreshInFlight = false;
+let lastReloginPrompt = "";
 function showReloginModal(type, opts = {}) {
   reloginType = type || "steam";
+  const promptKey = `${reloginType}:${opts.reason || "expired"}:${opts.error || ""}`;
   const overlay = el("relogin-overlay");
+  if (overlay && !overlay.classList.contains("hidden") && lastReloginPrompt === promptKey) return;
+  lastReloginPrompt = promptKey;
   if (overlay) overlay.classList.remove("hidden");
   const title = el("relogin-title");
   const msg = el("relogin-message");
@@ -264,6 +268,7 @@ function showReloginModal(type, opts = {}) {
 function hideReloginModal() {
   const overlay = el("relogin-overlay");
   if (overlay) overlay.classList.add("hidden");
+  lastReloginPrompt = "";
 }
 async function refreshInventory(forceRefresh = true) {
   if (inventoryRefreshInFlight) return;

@@ -271,6 +271,7 @@ def receive_worker() -> None:
     )
 
     buff_client = None
+    buff_client_config_key = None
     while True:
         try:
             cfg = load_app_config_validated()
@@ -297,11 +298,23 @@ def receive_worker() -> None:
                     credentials = get_buff_credentials() or {}
                     if not credentials.get("cookies"):
                         continue
-                    if buff_client is None:
+                    current_pay_method = str(
+                        (cfg.get("buff") or {}).get("pay_method") or "alipay"
+                    ).strip().lower()
+                    client_config_key = (
+                        current_pay_method,
+                        str(credentials.get("generation") or 0),
+                    )
+                    if buff_client is None or client_config_key != buff_client_config_key:
+                        if buff_client is not None:
+                            close_client = getattr(buff_client, "close", None)
+                            if callable(close_client):
+                                close_client()
                         buff_client = create_buff_client_from_config(
                             credentials,
                             cfg,
                         )
+                        buff_client_config_key = client_config_key
                     n = try_receive_once(
                         get_purchases,
                         update_purchase,

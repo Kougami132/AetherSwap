@@ -517,6 +517,15 @@ def _fetch_action_orderbook_cny(
                 if not isinstance(payload, dict):
                     last_error = "Steam 新版 orderbook 接口返回格式异常"
                     break
+                # Steam 当前接口把 queryAction 响应再包了一层 data；兼容旧的
+                # 直接返回 {success, data} 格式，避免把成功响应误判为失败。
+                wrapped_payload = payload.get("data")
+                if (
+                    "success" not in payload
+                    and isinstance(wrapped_payload, dict)
+                    and "success" in wrapped_payload
+                ):
+                    payload = wrapped_payload
                 if payload.get("success") not in (True, 1, "1"):
                     msg = payload.get("message") or payload.get("error") or ""
                     last_error = "Steam 新版 orderbook 接口返回失败" + (f": {msg}" if msg else "")

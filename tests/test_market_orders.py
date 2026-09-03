@@ -309,6 +309,45 @@ def test_新版_orderbook_action_按精确名称拉取目标变体(monkeypatch):
     assert requested["headers"]["x-valve-request-type"] == "queryAction"
 
 
+def test_新版_orderbook_action_兼容Steam当前双层响应(monkeypatch):
+    from steam import market_orders
+
+    class DummyResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "data": {
+                    "success": True,
+                    "data": {
+                        "eCurrency": 23,
+                        "amtMinSellOrder": 1250,
+                        "rgCompactSellOrders": [1250, 3, 1300, 2],
+                    },
+                }
+            }
+
+    class DummySession:
+        def get(self, *args, **kwargs):
+            return DummyResponse()
+
+    monkeypatch.setattr(
+        market_orders,
+        "get_proxy_manager",
+        lambda: type("PM", (), {"get_proxies_for_request": lambda self, failed=False: None})(),
+    )
+
+    result, error = market_orders._fetch_action_orderbook_cny(
+        DummySession(), "Chroma Case", 730
+    )
+
+    assert error is None
+    assert result == {
+        "lowest_price": 12.5,
+        "sell_orders": [(12.5, 3), (13.0, 2)],
+    }
+
+
 def test_get_sell_orders_cny_ssr预取错变体时回退新版_orderbook_action(monkeypatch):
     from steam import market_orders
 

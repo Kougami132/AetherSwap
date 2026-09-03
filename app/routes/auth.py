@@ -106,6 +106,14 @@ def _cookie_header_from_browser(cookies: list) -> str:
         if name:
             pieces.append(f"{name}={value}")
     return "; ".join(pieces)
+def _browser_cookies_from_header(cookie_str: str, url: str) -> list:
+    """Convert a stored Cookie header into Playwright cookies for recovery."""
+    cookies = []
+    for part in (cookie_str or "").split(";"):
+        name, separator, value = part.strip().partition("=")
+        if separator and name.strip():
+            cookies.append({"name": name.strip(), "value": value.strip(), "url": url})
+    return cookies
 def _has_browser_cookie(cookies: list, name: str) -> bool:
     wanted = name.lower()
     return any(
@@ -267,6 +275,16 @@ def _relogin_worker(relogin_type: str) -> None:
             profile_dir = Path(__file__).resolve().parent.parent.parent / "config" / "playwright_buff"
         profile_dir.mkdir(parents=True, exist_ok=True)
         context, temp_profile_dir = _launch_relogin_context(p, profile_dir, relogin_type)
+        if relogin_type == "buff":
+            # A fallback profile is disposable. Restore the last verified
+            # Cookie before navigation so a profile launch failure does not
+            # turn every relogin into a fresh BUFF login.
+            saved_cookie = str((get_buff_credentials() or {}).get("cookies") or "")
+            restored = _browser_cookies_from_header(saved_cookie, BUFF_ORIGIN)
+            if restored:
+                add_cookies = getattr(context, "add_cookies", None)
+                if callable(add_cookies):
+                    add_cookies(restored)
         page = context.pages[0] if context.pages else context.new_page()
         url = "https://store.steampowered.com/login/" if relogin_type == "steam" else "https://buff.163.com/"
         page.goto(url, wait_until="domcontentloaded", timeout=30000)

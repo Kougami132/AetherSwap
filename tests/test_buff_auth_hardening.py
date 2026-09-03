@@ -587,6 +587,12 @@ def test_checkout_state_freezes_buff_credentials(
 def test_abandoned_relogin_times_out_and_releases_buff_lock(monkeypatch, tmp_path):
     from app.routes import auth
 
+    monkeypatch.setattr(
+        auth,
+        "buff_credential_replacement_block_reason",
+        lambda: "",
+    )
+
     class Page:
         def goto(self, *args, **kwargs):
             return None
@@ -659,11 +665,40 @@ def test_auto_keepalive_never_opens_profile_for_manual_credentials(monkeypatch):
         "get_buff_credentials",
         lambda: {"cookies": "session=manual", "source": "manual"},
     )
+    monkeypatch.setattr(
+        buff_auth,
+        "buff_credential_replacement_block_reason",
+        lambda: "",
+    )
 
     result = buff_auth._try_buff_auto_relogin_impl()
 
     assert result[0] is False
     assert result[1] == "external_credentials"
+
+
+def test_auto_keepalive_accepts_ephemeral_playwright_credentials(monkeypatch):
+    from app.services import buff_auth
+
+    monkeypatch.setattr(
+        buff_auth,
+        "get_buff_credentials",
+        lambda: {"cookies": "session=ephemeral", "source": "playwright_ephemeral"},
+    )
+    monkeypatch.setattr(
+        buff_auth,
+        "buff_credential_replacement_block_reason",
+        lambda: "",
+    )
+    monkeypatch.setattr(
+        buff_auth,
+        "manual_buff_probe_allowed",
+        lambda *args: (False, "rate_limited", "wait"),
+    )
+
+    result = buff_auth._try_buff_auto_relogin_impl()
+
+    assert result == (False, "rate_limited", "wait")
 
 
 def test_auto_keepalive_does_not_replace_credentials_during_checkout(monkeypatch):
@@ -699,6 +734,11 @@ def test_auto_keepalive_does_not_probe_an_open_circuit(monkeypatch):
         buff_auth,
         "get_buff_credentials",
         lambda: {"cookies": "session=old", "source": "playwright"},
+    )
+    monkeypatch.setattr(
+        buff_auth,
+        "buff_credential_replacement_block_reason",
+        lambda: "",
     )
     monkeypatch.setattr(
         buff_auth,

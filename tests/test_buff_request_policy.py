@@ -1039,6 +1039,26 @@ def test_every_issued_abnormal_write_is_unknown_and_keeps_relevant_circuit(
     assert len(session.calls) == 1
 
 
+def test_expired_payment_order_is_not_misclassified_as_verification():
+    session = FakeSession(
+        FakeResponse({"code": "BillOrder Pay Expire", "error": "订单已过期"})
+    )
+    buyer = BuffBuyer(
+        "session=s; csrf_token=c",
+        session=session,
+        request_policy=no_wait_policy(),
+    )
+
+    result = buyer._make_request(
+        "GET",
+        API_PAGE_PAY,
+        params={"bill_order_id": "expired-order"},
+    )
+
+    assert result == {"code": "BillOrder Pay Expire", "error": "订单已过期"}
+    buyer.request_policy.raise_if_blocked(buyer.account_key)
+
+
 @pytest.mark.parametrize(
     "pay_response",
     [
@@ -1162,6 +1182,30 @@ def test_created_order_with_valid_payment_url_keeps_success_contract():
         ("POST", API_BUY),
         ("GET", API_PAGE_PAY),
     ]
+
+
+def test_alipay_payment_lookup_does_not_reuse_checkout_cashier_trace():
+    session = FakeSession(
+        user_info_response(),
+        buy_preview_response(pay_method=51),
+        FakeResponse(
+            {"code": "OK", "data": {"id": "paid-order"}},
+            headers={"Buff-Cashier-Trace-ID": "checkout-trace"},
+        ),
+        FakeResponse(
+            {"code": "OK", "data": {"url": "https://pay.example/1"}}
+        ),
+    )
+    buyer = BuffBuyer(
+        "session=s; csrf_token=c",
+        session=session,
+        request_policy=no_wait_policy(),
+    )
+
+    result = buyer.lock_and_get_pay_url("csgo", 1, "sell-order", "10.00")
+
+    assert result["success"] is True
+    assert "Buff-Cashier-Trace-ID" not in session.calls[3][2]["headers"]
 
 
 def test_balance_lock_payload_uses_pay_method_79_and_completes_page_pay():

@@ -616,7 +616,10 @@ def _try_buff_auto_relogin_impl() -> tuple[bool, str, str]:
 
     # A manually copied cookie belongs to a different browser profile.  Opening
     # our fixed Playwright profile must never replace it with unrelated cookies.
-    if str(cred.get("source") or "").lower() != "playwright":
+    if str(cred.get("source") or "").lower() not in {
+        "playwright",
+        "playwright_ephemeral",
+    }:
         log(
             "buff_relogin: 当前凭证不是由 Playwright profile 管理，已跳过自动覆盖",
             "info",

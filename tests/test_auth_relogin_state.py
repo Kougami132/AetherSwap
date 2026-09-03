@@ -164,6 +164,11 @@ def test_buff_auto_relogin_success_clears_auth_and_verification(monkeypatch):
         "clear_buff_request_policy_after_verification",
         lambda account_id=buff_auth.BUFF_ACCOUNT_ID: calls.append(("clear_policy", account_id)) or True,
     )
+    monkeypatch.setattr(
+        buff_auth,
+        "buff_credential_replacement_block_reason",
+        lambda: "",
+    )
     monkeypatch.setattr(buff_auth, "set_buff_auth_expired", lambda value: calls.append(("auth", value)))
     monkeypatch.setattr(
         buff_auth,
@@ -204,6 +209,18 @@ def test_relogin_context_retries_with_temp_profile(monkeypatch, tmp_path):
     assert context is not None
     assert temp_dir == temp_profile
     assert len(calls) == 2
+
+
+def test_browser_cookies_from_header_preserves_values_with_equals():
+    from app.routes import auth
+
+    assert auth._browser_cookies_from_header(
+        "session=abc==; csrf_token=csrf",
+        "https://buff.163.com/",
+    ) == [
+        {"name": "session", "value": "abc==", "url": "https://buff.163.com/"},
+        {"name": "csrf_token", "value": "csrf", "url": "https://buff.163.com/"},
+    ]
 
 
 def test_browser_launch_error_is_user_friendly():
