@@ -9,9 +9,9 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 CURRENCY_CNY = "CNY"
 CURRENCY_USD = "USD"
 DEFAULT_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
     "Referer": "https://steamcommunity.com/market/",
 }
 _LISTING_URL_RE = re.compile(
@@ -76,6 +76,51 @@ def _extract_ssr_queries(html: str) -> List[dict]:
         return []
     queries = query_data.get("queries") if isinstance(query_data, dict) else None
     return queries if isinstance(queries, list) else []
+
+
+def _extract_history_from_listing_html(html: str) -> Optional[Tuple[list, Optional[str]]]:
+    """Extract history prices and currency from listing HTML page (SSR queries or legacy line1)."""
+    from datetime import datetime, timezone
+    try:
+        from steam.market_orders import _STEAM_CURRENCY_CODES
+    except Exception:
+        _STEAM_CURRENCY_CODES = {}
+
+    queries = _extract_ssr_queries(html)
+    for q in queries:
+        k = q.get("queryKey")
+        if isinstance(k, list) and "pricehistory" in k:
+            data = q.get("state", {}).get("data", {})
+            raw_prices = data.get("prices")
+            if isinstance(raw_prices, list) and len(raw_prices) > 0:
+                history = []
+                for item in raw_prices:
+                    if isinstance(item, dict):
+                        ts = item.get("time")
+                        med_price = item.get("price_median")
+                        vol = item.get("purchases")
+                        if ts is not None and med_price is not None:
+                            try:
+                                dt = datetime.fromtimestamp(int(ts), tz=timezone.utc)
+                                date_str = dt.strftime("%b %d %Y %H: +0")
+                                history.append([date_str, float(med_price), str(vol or "1")])
+                            except Exception:
+                                continue
+                    elif isinstance(item, list) and len(item) >= 2:
+                        history.append(item)
+                if history:
+                    ecurrency = data.get("ecurrency")
+                    currency = _STEAM_CURRENCY_CODES.get(ecurrency) if ecurrency else None
+                    if not currency:
+                        currency = detect_currency(html)
+                    return history, currency
+
+    line1 = _extract_line1(html)
+    if line1:
+        currency = detect_currency(html)
+        return line1, currency
+
+    return None
 
 
 def _extract_market_query_name(query_key: Any, kind: str) -> str:
@@ -288,6 +333,31 @@ def fetch_history(
             cookies=cookies,
             timeout=timeout,
         )
+        if resp.status_code != 200 or not resp.text.strip() or resp.text.strip() == "null":
+            # Fallback: fetch listing HTML page and extract SSR pricehistory queries
+            listing_url = f"https://steamcommunity.com/market/listings/{app_id}/{encoded}"
+            listing_headers = {**DEFAULT_HEADERS, **(headers or {})}
+            listing_headers["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            listing_headers["Referer"] = "https://steamcommunity.com/market/"
+            try:
+                listing_resp = requests.get(
+                    listing_url,
+                    headers=listing_headers,
+                    verify=verify,
+                    proxies=proxies,
+                    cookies=cookies,
+                    timeout=timeout,
+                )
+                if listing_resp.status_code == 200:
+                    extracted = _extract_history_from_listing_html(listing_resp.text)
+                    if extracted:
+                        h_list, curr = extracted
+                        if return_currency:
+                            return ({"history": h_list, "currency": curr}, None) if return_error else {"history": h_list, "currency": curr}
+                        return (h_list, None) if return_error else h_list
+            except Exception:
+                pass
+
         if resp.status_code != 200:
             result = None
             error = f"HTTP {resp.status_code}"
